@@ -1,0 +1,68 @@
+.mpr {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  grid-template-rows: 1fr 1fr;
+  height: 100%;
+  gap: 1px;
+  background: var(--border);
+}
+
+.mpr__cell {
+  min-height: 0;
+  min-width: 0;
+  background: #000;
+  position: relative;
+}
+
+.mpr__cell--axial {
+  grid-column: 1;
+  grid-row: 1;
+}
+
+.mpr__cell--coronal {
+  grid-column: 2;
+  grid-row: 1;
+}
+
+.mpr__cell--sagittal {
+  grid-column: 1;
+  grid-row: 2;
+}
+
+.mpr__cell--oblique {
+  grid-column: 2;
+  grid-row: 2;
+  display: grid;
+  grid-template-rows: 1fr auto;
+  background: var(--bg-panel);
+}
+
+.mpr__oblique-view {
+  min-height: 0;
+}
+
+.mpr__oblique-controls {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px 12px;
+  border-top: 1px solid var(--border);
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  color: var(--text-muted);
+}
+
+.mpr__oblique-controls label {
+  display: grid;
+  grid-template-columns: 44px 1fr 40px;
+  align-items: center;
+  gap: 8px;
+}
+
+.mpr__oblique-controls input[type='range'] {
+  width: 100%;
+}
+
+.mpr__oblique-controls p {
+  margin: 0;
+}

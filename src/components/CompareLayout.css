@@ -1,0 +1,53 @@
+.compare {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 2px;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  background: var(--border);
+}
+
+.compare__pane {
+  position: relative;
+  min-width: 0;
+  min-height: 0;
+  background: #000;
+}
+
+.compare__badge {
+  position: absolute;
+  top: 8px;
+  left: 8px;
+  z-index: 3;
+  width: 22px;
+  height: 22px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 4px;
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  font-weight: 600;
+  pointer-events: none;
+  text-shadow: none;
+}
+
+.compare__badge--a {
+  background: color-mix(in srgb, var(--accent) 35%, #0a0c10);
+  color: #dff0ff;
+  border: 1px solid color-mix(in srgb, var(--accent) 55%, transparent);
+}
+
+.compare__badge--b {
+  background: color-mix(in srgb, #3ecf8e 30%, #0a0c10);
+  color: #d8ffe8;
+  border: 1px solid color-mix(in srgb, #3ecf8e 50%, transparent);
+}
+
+@media (max-width: 900px) {
+  .compare {
+    grid-template-columns: 1fr;
+    grid-template-rows: 1fr 1fr;
+  }
+}

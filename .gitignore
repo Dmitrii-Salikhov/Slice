@@ -1,0 +1,12 @@
+node_modules
+dist
+dist-electron
+dist-ssr
+*.local
+.DS_Store
+.release/
+release/
+sample-dicom
+coverage
+tests/.fixtures
+*.tsbuildinfo

@@ -1,0 +1,41 @@
+.update-dialog {
+  width: min(560px, 92vw);
+  max-height: min(80vh, 640px);
+  display: flex;
+  flex-direction: column;
+}
+
+.update-dialog__body {
+  overflow: auto;
+  flex: 1;
+}
+
+.update-dialog__versions {
+  margin: 0 0 12px;
+  font-family: var(--font-mono);
+  font-size: 0.85rem;
+  color: var(--accent);
+}
+
+.update-dialog__notes-title {
+  margin: 0 0 6px;
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--text-muted);
+}
+
+.update-dialog__notes {
+  margin: 0;
+  padding: 10px;
+  background: #0a0c10;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  line-height: 1.45;
+  max-height: 320px;
+  overflow: auto;
+  color: var(--text);
+}

@@ -1,0 +1,221 @@
+.app {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  background:
+    radial-gradient(ellipse 80% 50% at 20% -10%, #1a2838 0%, transparent 55%),
+    radial-gradient(ellipse 60% 40% at 100% 0%, #152028 0%, transparent 50%),
+    var(--bg);
+}
+
+.drop-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 50;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+  background: color-mix(in srgb, var(--accent) 12%, rgba(8, 10, 14, 0.72));
+  border: 2px dashed color-mix(in srgb, var(--accent) 70%, white);
+  box-sizing: border-box;
+}
+
+.drop-overlay__card {
+  padding: 28px 36px;
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--bg-elevated) 88%, transparent);
+  border: 1px solid color-mix(in srgb, var(--accent) 45%, var(--border));
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.35);
+}
+
+.drop-overlay__title {
+  font-size: 1.05rem;
+  font-weight: 500;
+  color: #dff0ff;
+  letter-spacing: -0.01em;
+}
+
+.empty__drop {
+  margin: 4px 0 0;
+  color: var(--text-muted);
+  font-size: 0.85rem;
+}
+
+.app__header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 4px 10px;
+  min-height: var(--toolbar-h);
+  border-bottom: 1px solid var(--border);
+  background: color-mix(in srgb, var(--bg-elevated) 92%, transparent);
+  flex-shrink: 0;
+}
+
+.app__brand {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 72px;
+  flex-shrink: 0;
+}
+
+.app__logo {
+  font-size: 1.05rem;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+}
+
+.app__version {
+  font-size: 0.72rem;
+  font-weight: 500;
+  opacity: 0.65;
+  letter-spacing: 0.02em;
+}
+
+.app__tag {
+  display: none;
+}
+
+.app__body {
+  display: grid;
+  grid-template-columns: 260px 1fr;
+  flex: 1;
+  min-height: 0;
+}
+
+.app__sidebar {
+  border-right: 1px solid var(--border);
+  background: var(--bg-panel);
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.app__sidebar .series-list {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+}
+
+.sidebar__meta {
+  padding: 12px;
+  border-bottom: 1px solid var(--border);
+}
+
+.sidebar__path {
+  margin: 0;
+  font-family: var(--font-mono);
+  font-size: 0.7rem;
+  color: var(--text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sidebar__hint,
+.sidebar__progress {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 0.8rem;
+}
+
+.app__main {
+  min-width: 0;
+  min-height: 0;
+  position: relative;
+}
+
+.empty {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  text-align: center;
+  padding: 32px;
+}
+
+.empty h1 {
+  margin: 0;
+  font-size: 3rem;
+  font-weight: 600;
+  letter-spacing: -0.03em;
+}
+
+.empty p {
+  margin: 0;
+  color: var(--text-muted);
+  max-width: 360px;
+}
+
+.empty__row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: center;
+}
+
+.empty__note {
+  font-size: 0.8rem;
+}
+
+.empty__note code {
+  font-family: var(--font-mono);
+  background: var(--bg-elevated);
+  padding: 2px 6px;
+  border-radius: 4px;
+}
+
+.btn {
+  border: 1px solid var(--border);
+  background: var(--bg-elevated);
+  border-radius: var(--radius);
+  padding: 8px 14px;
+  transition: border-color 0.15s, background 0.15s;
+}
+
+.btn:hover:not(:disabled) {
+  border-color: #3a4558;
+  background: #1a2030;
+}
+
+.btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.btn--primary {
+  background: var(--accent-dim);
+  border-color: var(--accent);
+  color: #dff0ff;
+}
+
+.btn--primary:hover:not(:disabled) {
+  background: #215a8a;
+}
+
+.btn--ghost {
+  background: transparent;
+}
+
+.btn--active {
+  border-color: var(--accent);
+  color: #cfe8ff;
+  background: color-mix(in srgb, var(--accent) 18%, transparent);
+}
+
+@media (max-width: 900px) {
+  .app__body {
+    grid-template-columns: 1fr;
+  }
+
+  .app__sidebar {
+    max-height: 180px;
+    border-right: none;
+    border-bottom: 1px solid var(--border);
+  }
+}
