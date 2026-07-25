@@ -37,12 +37,27 @@ jobs:
         with:
           name: Slice-windows-x64
           path: release/Slice-*-win-x64.zip
+      - name: Prepare Russian release notes
+        shell: pwsh
+        run: |
+          $lines = Get-Content CHANGELOG.md
+          $out = New-Object System.Collections.Generic.List[string]
+          $started = $false
+          foreach ($line in $lines) {
+            if ($line -match '^##\s') {
+              if ($started) { break }
+              $started = $true
+              continue
+            }
+            if ($started) { $out.Add($line) }
+          }
+          ($out -join "`n").Trim() + "`n" | Set-Content -Encoding utf8 release-notes.md
+          Get-Content release-notes.md
       - name: Attach to GitHub Release
         if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
         with:
           files: release/Slice-*-win-x64.zip
-          generate_release_notes: true
-          body_path: CHANGELOG.md
+          body_path: release-notes.md
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

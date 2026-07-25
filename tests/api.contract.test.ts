@@ -38,6 +38,7 @@ const EXPECTED_API_METHODS: (keyof SliceApi)[] = [
   'getPathForFile',
   'getAppVersion',
   'getUpdateRepo',
+  'checkUpdate',
   'openExternal',
 ];
 
@@ -75,6 +76,7 @@ describe('Slice API contract', () => {
       'settings:setPacsProfiles',
       'app:getVersion',
       'app:getUpdateRepo',
+      'app:checkUpdate',
       'shell:openExternal',
     ]) {
       expect(main).toContain(`'${channel}'`);

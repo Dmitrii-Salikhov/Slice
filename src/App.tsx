@@ -76,12 +76,13 @@ export default function App() {
   const { t } = useLocale();
   const { reportError } = useErrorLog();
   const { reportUpdate } = useUpdateLog();
-  const [appVersion, setAppVersion] = useState('1.0.1');
+  const [appVersion, setAppVersion] = useState('1.0.2');
   const [updateResult, setUpdateResult] = useState<Extract<
     UpdateCheckResult,
     { status: 'available' }
   > | null>(null);
   const [checkingUpdate, setCheckingUpdate] = useState(false);
+  const [updateOk, setUpdateOk] = useState(false);
   const [studies, setStudies] = useState<DicomStudy[]>([]);
   const [activeSeries, setActiveSeries] = useState<DicomSeries | null>(null);
   const [compareSeries, setCompareSeries] = useState<DicomSeries | null>(null);
@@ -923,34 +924,26 @@ export default function App() {
       const silent = !!opts?.silent;
       if (!silent) setCheckingUpdate(true);
       try {
-        let repo = GITHUB_REPO;
-        if (window.slice?.getUpdateRepo) {
-          repo = await window.slice.getUpdateRepo();
-        }
-        const current =
-          (window.slice?.getAppVersion && (await window.slice.getAppVersion())) ||
-          appVersion;
-        const result = await checkGithubUpdate(current, repo);
-        if (result.status === 'up-to-date') {
-          reportUpdate(
-            t('update.logUpToDate', { version: result.currentVersion }),
-            'update',
-          );
-          if (!silent) {
-            window.alert(
-              t('update.upToDate', { version: result.currentVersion }),
-            );
+        let result: UpdateCheckResult;
+        if (window.slice?.checkUpdate) {
+          result = await window.slice.checkUpdate();
+        } else {
+          let repo = GITHUB_REPO;
+          if (window.slice?.getUpdateRepo) {
+            repo = await window.slice.getUpdateRepo();
           }
+          const current =
+            (window.slice?.getAppVersion && (await window.slice.getAppVersion())) ||
+            appVersion;
+          result = await checkGithubUpdate(current, repo);
+        }
+        if (result.status === 'up-to-date') {
+          setUpdateOk(true);
         } else if (result.status === 'available') {
-          reportUpdate(
-            t('update.logAvailable', {
-              current: result.currentVersion,
-              latest: result.latestVersion,
-            }),
-            'update',
-          );
+          setUpdateOk(false);
           setUpdateResult(result);
         } else {
+          setUpdateOk(false);
           reportUpdate(
             t('update.logError', { message: result.message }),
             'update',
@@ -960,6 +953,7 @@ export default function App() {
           }
         }
       } catch (e) {
+        setUpdateOk(false);
         const msg = e instanceof Error ? e.message : String(e);
         reportUpdate(t('update.logError', { message: msg }), 'update');
         if (!silent) reportError(msg, 'update');
@@ -1385,6 +1379,15 @@ export default function App() {
           <span className="app__version" title={t('update.versionTip')}>
             v{appVersion}
           </span>
+          {updateOk && (
+            <span
+              className="app__update-ok"
+              title={t('update.upToDate', { version: appVersion })}
+              aria-label={t('update.upToDate', { version: appVersion })}
+            >
+              ✓
+            </span>
+          )}
           <span className="app__tag">{t('app.tag')}</span>
         </div>
         <Toolbar
@@ -1471,7 +1474,6 @@ export default function App() {
           void window.slice?.openExternal?.(url);
         }}
         onDownload={(url) => {
-          reportUpdate(t('update.logDownload', { url }), 'update');
           void window.slice?.openExternal?.(url);
         }}
       />

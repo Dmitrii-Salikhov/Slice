@@ -156,6 +156,28 @@ export type SliceApi = {
   getPathForFile: (file: File) => string;
   getAppVersion: () => Promise<string>;
   getUpdateRepo: () => Promise<{ owner: string; repo: string }>;
+  checkUpdate: () => Promise<
+    | {
+        status: 'up-to-date';
+        currentVersion: string;
+        latestVersion: string;
+      }
+    | {
+        status: 'available';
+        currentVersion: string;
+        latestVersion: string;
+        releaseName: string;
+        body: string;
+        htmlUrl: string;
+        downloadUrl: string | null;
+        publishedAt: string | null;
+      }
+    | {
+        status: 'error';
+        currentVersion: string;
+        message: string;
+      }
+  >;
   openExternal: (url: string) => Promise<{ ok: boolean; error?: string }>;
 };
 

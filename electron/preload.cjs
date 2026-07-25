@@ -66,5 +66,6 @@ contextBridge.exposeInMainWorld('slice', {
   },
   getAppVersion: () => ipcRenderer.invoke('app:getVersion'),
   getUpdateRepo: () => ipcRenderer.invoke('app:getUpdateRepo'),
+  checkUpdate: () => ipcRenderer.invoke('app:checkUpdate'),
   openExternal: (url) => ipcRenderer.invoke('shell:openExternal', url),
 });

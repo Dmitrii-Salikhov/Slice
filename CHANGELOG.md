@@ -1,18 +1,28 @@
 # Changelog
 
+## 1.0.2 — 2026-07-25
+
+### Исправлено
+- Проверка обновлений больше не падает из‑за CORS: запрос к GitHub идёт через main-процесс Electron
+- При актуальной версии не показывается всплывающее окно — рядом с номером версии зелёная галочка с подсказкой
+- «Лог обновлений» скрыт, пока нет ошибок проверки
+
+### Изменено
+- Версия приложения **1.0.2**
+
 ## 1.0.1 — 2026-07-25
 
-### Added
-- Windows folder distribution (`win-unpacked` / zip) via GitHub Actions
-- In-app version display and GitHub update check
-- Changelog view when a newer release is available
-- Update activity log (same retention rules as the error log)
-- DICOM tag browser, ellipse ROI, invert/flip, decode workers
-- Native menu, hotkeys, dense toolbar, Icon.ico branding
+### Добавлено
+- Сборка Windows папкой (`win-unpacked` / zip) через GitHub Actions
+- Отображение версии и проверка обновлений через GitHub
+- Просмотр «что нового» при доступном обновлении
+- Лог обновлений (те же правила хранения, что у лога ошибок)
+- Браузер DICOM-тегов, эллиптический ROI, инверсия/отражение, decode workers
+- Нативное меню, горячие клавиши, компактная панель, Icon.ico
 
-### Changed
-- App version set to **1.0.1**
-- Metadata-first loading with Int16 LRU pixel cache for large series
+### Изменено
+- Версия приложения **1.0.1**
+- Загрузка серий: сначала метаданные, Int16 LRU-кэш пикселей для больших серий
 
-### Fixed
-- Packaging path prepared for GitHub Releases (`Slice-*-win-x64.zip`)
+### Исправлено
+- Подготовка артефакта релизов `Slice-*-win-x64.zip`

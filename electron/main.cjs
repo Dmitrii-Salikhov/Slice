@@ -8,6 +8,7 @@ const { listMediaSources } = require('./media.cjs');
 const { pacsEcho, pacsFind, pacsMove, pacsGet, pacsStore } = require('./pacs.cjs');
 const { installAppMenu } = require('./menu.cjs');
 const { collectOpenPathsFromArgv } = require('./argv.cjs');
+const { checkGithubUpdate } = require('./update.cjs');
 const {
   allowRoot,
   allowFile,
@@ -532,6 +533,19 @@ ipcMain.handle('app:getUpdateRepo', () => {
     // fall through
   }
   return { owner: 'Dmitrii-Salikhov', repo: 'Slice' };
+});
+
+ipcMain.handle('app:checkUpdate', async () => {
+  let repo = { owner: 'Dmitrii-Salikhov', repo: 'Slice' };
+  try {
+    const pkg = require('../package.json');
+    const repoUrl = pkg.repository?.url || pkg.homepage || '';
+    const m = /github\.com[/:]([^/]+)\/([^/.]+)/i.exec(repoUrl);
+    if (m) repo = { owner: m[1], repo: m[2].replace(/\.git$/, '') };
+  } catch {
+    // keep default
+  }
+  return checkGithubUpdate(app.getVersion(), repo);
 });
 
 ipcMain.handle('shell:openExternal', async (_event, url) => {
