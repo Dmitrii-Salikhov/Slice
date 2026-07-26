@@ -17,6 +17,7 @@ contextBridge.exposeInMainWorld('slice', {
   zipNeedsPassword: (zipPath) => ipcRenderer.invoke('zip:needsPassword', zipPath),
   extractZip: (zipPath, password) => ipcRenderer.invoke('zip:extract', zipPath, password),
   listMedia: () => ipcRenderer.invoke('media:list'),
+  openMedia: (mediaPath) => ipcRenderer.invoke('media:open', mediaPath),
   pacsEcho: (conn) => ipcRenderer.invoke('pacs:echo', conn),
   pacsFind: (conn, query) => ipcRenderer.invoke('pacs:find', conn, query),
   pacsMove: (conn, studyInstanceUid, opts) =>

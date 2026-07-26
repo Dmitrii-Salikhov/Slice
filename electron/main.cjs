@@ -3,9 +3,10 @@ const path = require('node:path');
 const fs = require('node:fs/promises');
 const fsSync = require('node:fs');
 const os = require('node:os');
+const { fileURLToPath } = require('node:url');
 const { extractZipArchive, zipNeedsPassword, isZipPath } = require('./zip.cjs');
 const { listMediaSources } = require('./media.cjs');
-const { pacsEcho, pacsFind, pacsMove, pacsGet, pacsStore } = require('./pacs.cjs');
+const { pacsEcho, pacsFind, pacsMove, pacsGet, pacsStore, validatePacsConn } = require('./pacs.cjs');
 const { installAppMenu } = require('./menu.cjs');
 const { collectOpenPathsFromArgv } = require('./argv.cjs');
 const { checkGithubUpdate } = require('./update.cjs');
@@ -21,6 +22,10 @@ const {
   assertOpenable,
   assertZipSource,
   normalize,
+  registerSessionTemp,
+  setPendingMediaRoots,
+  claimMediaRoot,
+  isBroadFilesystemRoot,
 } = require('./paths.cjs');
 
 /** @type {Map<string, { cancelled: boolean }>} */
@@ -32,6 +37,38 @@ let mainWindow = null;
 let pendingOpenPaths = collectOpenPathsFromArgv(process.argv);
 
 const ICON_PATH = path.join(__dirname, '..', 'Icon.ico');
+
+function PROFILES_FILE() {
+  return path.join(app.getPath('userData'), 'pacs-profiles.json');
+}
+
+function BOUNDS_FILE() {
+  return path.join(app.getPath('userData'), 'window-bounds.json');
+}
+
+const ALLOWED_EXTERNAL_HOSTS = new Set([
+  'github.com',
+  'www.github.com',
+  'api.github.com',
+  'objects.githubusercontent.com',
+  'release-assets.githubusercontent.com',
+  'githubusercontent.com',
+]);
+
+function isAllowedExternalUrl(urlStr) {
+  let u;
+  try {
+    u = new URL(String(urlStr || ''));
+  } catch {
+    return false;
+  }
+  if (u.protocol !== 'https:' && u.protocol !== 'http:') return false;
+  if (u.username || u.password) return false;
+  const host = u.hostname.toLowerCase();
+  if (ALLOWED_EXTERNAL_HOSTS.has(host)) return true;
+  if (host.endsWith('.githubusercontent.com')) return true;
+  return false;
+}
 
 function resolveAppIcon() {
   try {
@@ -57,6 +94,7 @@ function deliverOpenPaths(paths) {
   for (const p of paths) {
     try {
       const resolved = normalize(p);
+      if (isBroadFilesystemRoot(resolved)) continue;
       const st = fsSync.statSync(resolved);
       if (st.isDirectory()) allowRoot(resolved);
       else allowFile(resolved);
@@ -137,6 +175,7 @@ function createWindow() {
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: true,
+      webSecurity: true,
     },
   });
 
@@ -145,6 +184,25 @@ function createWindow() {
 
   win.once('ready-to-show', () => {
     win.show();
+  });
+
+  win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
+  win.webContents.on('will-navigate', (event, url) => {
+    const devUrl = process.env.VITE_DEV_SERVER_URL;
+    let allowed = false;
+    try {
+      if (devUrl) {
+        const allowedOrigin = new URL(devUrl).origin;
+        allowed = new URL(url).origin === allowedOrigin;
+      } else if (url.startsWith('file:')) {
+        const appRoot = path.resolve(path.join(__dirname, '..', 'dist'));
+        const target = path.normalize(fileURLToPath(url));
+        allowed = target === appRoot || target.startsWith(appRoot + path.sep);
+      }
+    } catch {
+      allowed = false;
+    }
+    if (!allowed) event.preventDefault();
   });
 
   win.on('close', () => saveWindowBounds(win));
@@ -225,27 +283,29 @@ async function resolveDroppedPaths(paths) {
     seen.add(p);
     try {
       const resolved = normalize(p);
+      if (isBroadFilesystemRoot(resolved)) continue;
       const stat = await fs.stat(resolved);
       if (stat.isDirectory()) {
+        if (isBroadFilesystemRoot(resolved)) continue;
         allowRoot(resolved);
         files.push(...(await collectDicomFiles(resolved)));
       } else if (stat.isFile()) {
+        // File drops: allow only the file, not its entire parent directory.
         allowFile(resolved);
-        allowRoot(path.dirname(resolved));
         if (isZipPath(resolved)) {
           const needs = await zipNeedsPassword(resolved);
           if (needs) {
             return { needsPassword: true, zipPath: resolved, files: [] };
           }
           const extracted = await extractZipArchive(resolved);
-          allowRoot(extracted.extractDir);
+          registerSessionTemp(extracted.extractDir);
           files.push(...extracted.files);
         } else {
           files.push(resolved);
         }
       }
     } catch {
-      // skip inaccessible paths
+      // skip inaccessible / denied paths
     }
   }
 
@@ -259,7 +319,11 @@ ipcMain.handle('dialog:openFolder', async () => {
   });
   if (result.canceled || result.filePaths.length === 0) return null;
   const folder = result.filePaths[0];
-  allowRoot(folder);
+  try {
+    allowRoot(folder);
+  } catch {
+    return null;
+  }
   return folder;
 });
 
@@ -287,7 +351,11 @@ ipcMain.handle('dialog:openDicomFiles', async () => {
   if (result.canceled || result.filePaths.length === 0) return [];
   for (const filePath of result.filePaths) {
     allowFile(filePath);
-    allowRoot(path.dirname(filePath));
+    try {
+      allowRoot(path.dirname(filePath));
+    } catch {
+      // parent may be too broad (e.g. home) — file itself remains allowed
+    }
   }
   return result.filePaths;
 });
@@ -314,7 +382,11 @@ ipcMain.handle('dialog:openZip', async () => {
   if (result.canceled || result.filePaths.length === 0) return null;
   const zipPath = result.filePaths[0];
   allowFile(zipPath);
-  allowRoot(path.dirname(zipPath));
+  try {
+    allowRoot(path.dirname(zipPath));
+  } catch {
+    // parent may be too broad
+  }
   return zipPath;
 });
 
@@ -367,8 +439,7 @@ ipcMain.handle('fs:writeTemp', async (_event, fileName, data) => {
   try {
     const safe = path.basename(String(fileName || 'file.bin')).replace(/[^\w.-]+/g, '_');
     const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'slice-out-'));
-    allowRoot(dir);
-    allowWriteRoot(dir);
+    registerSessionTemp(dir);
     const outPath = path.join(dir, safe || 'file.bin');
     const buffer = Buffer.from(data);
     await fs.writeFile(outPath, buffer);
@@ -411,7 +482,7 @@ ipcMain.handle('zip:extract', async (_event, zipPath, password) => {
   try {
     const allowed = assertZipSource(zipPath);
     const result = await extractZipArchive(allowed, password || undefined);
-    allowRoot(result.extractDir);
+    registerSessionTemp(result.extractDir);
     return {
       ok: true,
       files: result.files,
@@ -434,31 +505,60 @@ ipcMain.handle('zip:extract', async (_event, zipPath, password) => {
 ipcMain.handle('media:list', async () => {
   try {
     const list = await listMediaSources();
-    for (const m of list) {
-      if (m?.path) allowRoot(m.path);
-    }
+    setPendingMediaRoots((list || []).map((m) => m?.path).filter(Boolean));
     return list;
   } catch {
     return [];
   }
 });
 
-ipcMain.handle('pacs:echo', async (_event, conn) => {
+ipcMain.handle('media:open', async (_event, mediaPath) => {
   try {
-    return { ok: true, ...(await pacsEcho(conn)) };
+    const allowed = claimMediaRoot(mediaPath);
+    return { ok: true, path: allowed };
   } catch (e) {
     return { ok: false, error: e instanceof Error ? e.message : String(e) };
   }
 });
 
-ipcMain.handle('pacs:find', async (_event, conn, query) => {
-  try {
-    const results = await pacsFind(conn, query || {});
-    return { ok: true, results };
-  } catch (e) {
-    return { ok: false, error: e instanceof Error ? e.message : String(e), results: [] };
-  }
-});
+function withValidatedPacs(handler) {
+  return async (event, conn, ...rest) => {
+    try {
+      const safe = validatePacsConn(conn);
+      return await handler(event, safe, ...rest);
+    } catch (e) {
+      return {
+        ok: false,
+        error: e instanceof Error ? e.message : String(e),
+        results: [],
+        files: [],
+      };
+    }
+  };
+}
+
+ipcMain.handle(
+  'pacs:echo',
+  withValidatedPacs(async (_event, conn) => {
+    try {
+      return { ok: true, ...(await pacsEcho(conn)) };
+    } catch (e) {
+      return { ok: false, error: e instanceof Error ? e.message : String(e) };
+    }
+  }),
+);
+
+ipcMain.handle(
+  'pacs:find',
+  withValidatedPacs(async (_event, conn, query) => {
+    try {
+      const results = await pacsFind(conn, query || {});
+      return { ok: true, results };
+    } catch (e) {
+      return { ok: false, error: e instanceof Error ? e.message : String(e), results: [] };
+    }
+  }),
+);
 
 async function runPacsRetrieve(event, conn, studyInstanceUid, opts, retrieveFn) {
   const baseOpts = opts || {};
@@ -474,7 +574,7 @@ async function runPacsRetrieve(event, conn, studyInstanceUid, opts, retrieveFn) 
       },
       isCancelled: () => job.cancelled,
     });
-    if (result?.extractDir) allowRoot(result.extractDir);
+    if (result?.extractDir) registerSessionTemp(result.extractDir);
     if (Array.isArray(result?.files)) {
       for (const f of result.files) allowFile(f);
     }
@@ -494,11 +594,21 @@ async function runPacsRetrieve(event, conn, studyInstanceUid, opts, retrieveFn) 
 }
 
 ipcMain.handle('pacs:move', async (event, conn, studyInstanceUid, opts) => {
-  return runPacsRetrieve(event, conn, studyInstanceUid, opts, pacsMove);
+  try {
+    const safe = validatePacsConn(conn);
+    return await runPacsRetrieve(event, safe, studyInstanceUid, opts, pacsMove);
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : String(e), files: [] };
+  }
 });
 
 ipcMain.handle('pacs:get', async (event, conn, studyInstanceUid, opts) => {
-  return runPacsRetrieve(event, conn, studyInstanceUid, opts, pacsGet);
+  try {
+    const safe = validatePacsConn(conn);
+    return await runPacsRetrieve(event, safe, studyInstanceUid, opts, pacsGet);
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : String(e), files: [] };
+  }
 });
 
 ipcMain.handle('pacs:retrieve-cancel', (_event, jobId) => {
@@ -509,12 +619,13 @@ ipcMain.handle('pacs:retrieve-cancel', (_event, jobId) => {
 
 ipcMain.handle('pacs:store', async (_event, conn, filePaths) => {
   try {
+    const safe = validatePacsConn(conn);
     const allowed = [];
     for (const p of filePaths || []) {
       allowed.push(assertReadable(p));
     }
     if (allowed.length === 0) throw new Error('No allowed files to store');
-    const result = await pacsStore(conn, allowed);
+    const result = await pacsStore(safe, allowed);
     return { ok: true, ...result };
   } catch (e) {
     return { ok: false, error: e instanceof Error ? e.message : String(e) };
@@ -551,8 +662,8 @@ ipcMain.handle('app:checkUpdate', async () => {
 ipcMain.handle('shell:openExternal', async (_event, url) => {
   try {
     const s = String(url || '');
-    if (!/^https?:\/\//i.test(s)) {
-      return { ok: false, error: 'Only http(s) URLs allowed' };
+    if (!isAllowedExternalUrl(s)) {
+      return { ok: false, error: 'URL host not allowed' };
     }
     await shell.openExternal(s);
     return { ok: true };
@@ -572,9 +683,18 @@ ipcMain.handle('settings:getPacsProfiles', async () => {
 
 ipcMain.handle('settings:setPacsProfiles', async (_event, payload) => {
   try {
+    if (!payload || typeof payload !== 'object' || !Array.isArray(payload.profiles)) {
+      throw new Error('Invalid profiles payload');
+    }
+    for (const p of payload.profiles) {
+      if (p?.conn) validatePacsConn(p.conn);
+    }
     const file = PROFILES_FILE();
     await fs.mkdir(path.dirname(file), { recursive: true });
-    await fs.writeFile(file, `${JSON.stringify(payload, null, 2)}\n`, 'utf8');
+    await fs.writeFile(file, `${JSON.stringify(payload, null, 2)}\n`, {
+      encoding: 'utf8',
+      mode: 0o600,
+    });
     return { ok: true };
   } catch (e) {
     return { ok: false, error: e instanceof Error ? e.message : String(e) };

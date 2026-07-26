@@ -9,6 +9,9 @@ const {
   ERR_INVALID_PASSWORD,
 } = require('@zip.js/zip.js');
 
+/** Soft cap to avoid main-process OOM on hostile archives. */
+const MAX_ZIP_BYTES = 512 * 1024 * 1024;
+
 function looksLikeDicomName(name) {
   const base = path.basename(name).toLowerCase();
   if (base === 'dicomdir') return false;
@@ -25,6 +28,13 @@ function isZipPath(filePath) {
  * @returns {Promise<{ files: string[], extractDir: string, entryCount: number }>}
  */
 async function extractZipArchive(zipPath, password) {
+  const st = await fs.stat(zipPath);
+  if (st.size > MAX_ZIP_BYTES) {
+    const err = new Error(`ZIP too large (max ${MAX_ZIP_BYTES} bytes)`);
+    err.code = 'ZIP_TOO_LARGE';
+    throw err;
+  }
+
   const data = await fs.readFile(zipPath);
   const reader = new ZipReader(new Uint8ArrayReader(new Uint8Array(data)), {
     password: password || undefined,
@@ -110,6 +120,12 @@ async function extractZipArchive(zipPath, password) {
  * @param {string} zipPath
  */
 async function zipNeedsPassword(zipPath) {
+  const st = await fs.stat(zipPath);
+  if (st.size > MAX_ZIP_BYTES) {
+    const err = new Error(`ZIP too large (max ${MAX_ZIP_BYTES} bytes)`);
+    err.code = 'ZIP_TOO_LARGE';
+    throw err;
+  }
   const data = await fs.readFile(zipPath);
   const reader = new ZipReader(new Uint8ArrayReader(new Uint8Array(data)));
   try {
@@ -124,4 +140,5 @@ module.exports = {
   extractZipArchive,
   zipNeedsPassword,
   isZipPath,
+  MAX_ZIP_BYTES,
 };

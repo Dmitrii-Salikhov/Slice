@@ -122,6 +122,9 @@ export type SliceApi = {
   zipNeedsPassword: (zipPath: string) => Promise<boolean>;
   extractZip: (zipPath: string, password?: string) => Promise<ZipExtractResult>;
   listMedia: () => Promise<MediaSource[]>;
+  openMedia: (
+    mediaPath: string,
+  ) => Promise<{ ok: boolean; path?: string; error?: string }>;
   pacsEcho: (
     conn: PacsConnection,
   ) => Promise<{ ok: boolean; status?: number; error?: string }>;

@@ -76,7 +76,7 @@ export default function App() {
   const { t } = useLocale();
   const { reportError } = useErrorLog();
   const { reportUpdate } = useUpdateLog();
-  const [appVersion, setAppVersion] = useState('1.0.2');
+  const [appVersion, setAppVersion] = useState('1.0.3');
   const [updateResult, setUpdateResult] = useState<Extract<
     UpdateCheckResult,
     { status: 'available' }
@@ -386,6 +386,10 @@ export default function App() {
       if (!window.slice) return;
       setMediaOpen(false);
       try {
+        if (window.slice.openMedia) {
+          const claimed = await window.slice.openMedia(media.path);
+          if (!claimed.ok) throw new Error(claimed.error || 'Media path denied');
+        }
         if (await tryOpenDicomdir(media.path)) return;
         const files = await window.slice.listDicomFiles(media.path);
         await loadFromFiles(files, media.path);

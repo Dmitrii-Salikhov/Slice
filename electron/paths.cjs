@@ -11,6 +11,10 @@ const allowedWriteRoots = new Set();
 const allowedWriteFiles = new Set();
 /** @type {Set<string>} */
 const allowedOpenFiles = new Set();
+/** @type {Set<string>} */
+const sessionTempRoots = new Set();
+/** @type {Set<string>} */
+const pendingMediaRoots = new Set();
 
 function normalize(filePath) {
   if (!filePath || typeof filePath !== 'string') {
@@ -24,16 +28,57 @@ function isInside(child, parent) {
   const p = normalize(parent);
   if (c === p) return true;
   const prefix = p.endsWith(path.sep) ? p : p + path.sep;
-  // Case-insensitive on Windows
   if (process.platform === 'win32') {
     return c.toLowerCase().startsWith(prefix.toLowerCase());
   }
   return c.startsWith(prefix);
 }
 
+/** Reject allowlisting entire disks / home / common top-level trees. */
+function isBroadFilesystemRoot(dir) {
+  const n = normalize(dir);
+  if (process.platform === 'win32') {
+    if (/^[a-zA-Z]:\\?$/i.test(n)) return true;
+    if (/^[a-zA-Z]:\\Users$/i.test(n)) return true;
+    if (/^[a-zA-Z]:\\Windows$/i.test(n)) return true;
+    if (/^[a-zA-Z]:\\Program Files( \(x86\))?$/i.test(n)) return true;
+  } else {
+    if (n === '/') return true;
+    const banned = new Set([
+      '/Users',
+      '/home',
+      '/Volumes',
+      '/private',
+      '/tmp',
+      '/var',
+      '/etc',
+      '/System',
+      '/Library',
+      '/Applications',
+    ]);
+    if (banned.has(n)) return true;
+  }
+  try {
+    if (n === normalize(os.homedir())) return true;
+  } catch {
+    // ignore
+  }
+  return false;
+}
+
+function pathDenied(message) {
+  const err = new Error(message);
+  err.code = 'PATH_DENIED';
+  return err;
+}
+
 function allowRoot(dir) {
   if (!dir) return;
-  allowedRoots.add(normalize(dir));
+  const n = normalize(dir);
+  if (isBroadFilesystemRoot(n)) {
+    throw pathDenied('Path too broad to allow');
+  }
+  allowedRoots.add(n);
 }
 
 function allowFile(filePath) {
@@ -43,7 +88,11 @@ function allowFile(filePath) {
 
 function allowWriteRoot(dir) {
   if (!dir) return;
-  allowedWriteRoots.add(normalize(dir));
+  const n = normalize(dir);
+  if (isBroadFilesystemRoot(n)) {
+    throw pathDenied('Path too broad to allow');
+  }
+  allowedWriteRoots.add(n);
 }
 
 function allowWriteFile(filePath) {
@@ -58,13 +107,46 @@ function allowOpen(filePath) {
   allowedOpenFiles.add(normalize(filePath));
 }
 
-function isUnderTmpSlice(filePath) {
+/** Register a main-created temp directory (mkdtemp). */
+function registerSessionTemp(dir) {
+  const n = normalize(dir);
+  sessionTempRoots.add(n);
+  allowedRoots.add(n);
+  allowedWriteRoots.add(n);
+  return n;
+}
+
+function isSessionTemp(filePath) {
   const n = normalize(filePath);
-  const tmp = normalize(os.tmpdir());
-  if (!isInside(n, tmp)) return false;
-  // any path under os.tmpdir()/slice-* 
-  const rel = n.slice(tmp.length).split(path.sep).filter(Boolean);
-  return rel.some((seg) => seg.startsWith('slice-'));
+  for (const root of sessionTempRoots) {
+    if (isInside(n, root)) return true;
+  }
+  return false;
+}
+
+function setPendingMediaRoots(paths) {
+  pendingMediaRoots.clear();
+  for (const p of paths || []) {
+    if (!p) continue;
+    try {
+      pendingMediaRoots.add(normalize(p));
+    } catch {
+      // skip
+    }
+  }
+}
+
+/** Claim a media path from the last media:list scan into the session allowlist. */
+function claimMediaRoot(dirPath) {
+  const n = normalize(dirPath);
+  if (!pendingMediaRoots.has(n)) {
+    throw pathDenied('Media path not from last scan');
+  }
+  if (isBroadFilesystemRoot(n)) {
+    throw pathDenied('Path too broad to allow');
+  }
+  allowedRoots.add(n);
+  return n;
 }
 
 function assertReadable(filePath) {
@@ -73,10 +155,8 @@ function assertReadable(filePath) {
   for (const root of allowedRoots) {
     if (isInside(n, root)) return n;
   }
-  if (isUnderTmpSlice(n)) return n;
-  const err = new Error('Path not allowed for read');
-  err.code = 'PATH_DENIED';
-  throw err;
+  if (isSessionTemp(n)) return n;
+  throw pathDenied('Path not allowed for read');
 }
 
 function assertListable(dirPath) {
@@ -84,9 +164,8 @@ function assertListable(dirPath) {
   for (const root of allowedRoots) {
     if (n === root || isInside(n, root)) return n;
   }
-  const err = new Error('Path not allowed for list');
-  err.code = 'PATH_DENIED';
-  throw err;
+  if (isSessionTemp(n)) return n;
+  throw pathDenied('Path not allowed for list');
 }
 
 function assertWritable(filePath) {
@@ -95,37 +174,27 @@ function assertWritable(filePath) {
   for (const root of allowedWriteRoots) {
     if (isInside(n, root)) return n;
   }
-  if (isUnderTmpSlice(n)) return n;
-  const err = new Error('Path not allowed for write');
-  err.code = 'PATH_DENIED';
-  throw err;
+  if (isSessionTemp(n)) return n;
+  throw pathDenied('Path not allowed for write');
 }
 
 function assertOpenable(filePath) {
   const n = normalize(filePath);
   if (allowedOpenFiles.has(n)) return n;
-  if (isUnderTmpSlice(n)) return n;
-  // Also allow opening files we can read that are PDF/images under session
+  if (isSessionTemp(n)) return n;
   for (const root of allowedRoots) {
     if (isInside(n, root) && /\.(pdf|png|jpe?g|dcm|dicom)$/i.test(n)) return n;
   }
-  const err = new Error('Path not allowed to open');
-  err.code = 'PATH_DENIED';
-  throw err;
+  throw pathDenied('Path not allowed to open');
 }
 
 function assertZipSource(zipPath) {
   const n = normalize(zipPath);
-  // ZIP may be outside session until extract — allow any real zip chosen via dialog/drop
-  // but register after dialog. For needsPassword before allow, check allowedFiles or roots or absolute under user home is too broad.
-  // Policy: zip source must be in allowedFiles (from dialog) or under an allowed root or dropped (registered).
   if (allowedFiles.has(n)) return n;
   for (const root of allowedRoots) {
     if (isInside(n, root)) return n;
   }
-  const err = new Error('Path not allowed for zip');
-  err.code = 'PATH_DENIED';
-  throw err;
+  throw pathDenied('Path not allowed for zip');
 }
 
 /** Ensure resolved child stays under root (Zip-Slip / DICOMDIR). */
@@ -155,16 +224,23 @@ function resetForTests() {
   allowedWriteRoots.clear();
   allowedWriteFiles.clear();
   allowedOpenFiles.clear();
+  sessionTempRoots.clear();
+  pendingMediaRoots.clear();
 }
 
 module.exports = {
   normalize,
   isInside,
+  isBroadFilesystemRoot,
   allowRoot,
   allowFile,
   allowWriteRoot,
   allowWriteFile,
   allowOpen,
+  registerSessionTemp,
+  isSessionTemp,
+  setPendingMediaRoots,
+  claimMediaRoot,
   assertReadable,
   assertListable,
   assertWritable,
@@ -172,5 +248,4 @@ module.exports = {
   assertZipSource,
   containPath,
   resetForTests,
-  isUnderTmpSlice,
 };

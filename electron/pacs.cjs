@@ -1,7 +1,9 @@
 const path = require('node:path');
 const fs = require('node:fs/promises');
 const os = require('node:os');
+const net = require('node:net');
 const dcmjsDimse = require('dcmjs-dimse');
+const { registerSessionTemp } = require('./paths.cjs');
 
 const { Client, Server, Scp } = dcmjsDimse;
 const { CFindRequest, CMoveRequest, CGetRequest, CStoreRequest, CEchoRequest } =
@@ -11,6 +13,9 @@ const {
   Status,
   PresentationContextResult,
   TransferSyntax,
+  RejectResult,
+  RejectSource,
+  RejectReason,
 } = dcmjsDimse.constants;
 
 function elemToString(value) {
@@ -69,8 +74,101 @@ function pickTransferSyntax(uids) {
   return uids[0];
 }
 
-function createReceiveScp(saveDir, savedFiles, onFile) {
+function normalizeAe(value) {
+  return String(value || '')
+    .trim()
+    .toUpperCase();
+}
+
+/**
+ * Validate PACS connection from the renderer before any network I/O.
+ * @param {unknown} raw
+ */
+function validatePacsConn(raw) {
+  if (!raw || typeof raw !== 'object') {
+    throw new Error('Invalid PACS connection');
+  }
+  const conn = /** @type {Record<string, unknown>} */ (raw);
+  const host = String(conn.host || '').trim();
+  if (!host) throw new Error('PACS host required');
+  if (host.length > 253) throw new Error('Invalid PACS host');
+  if (!net.isIP(host) && !/^[a-zA-Z0-9]([a-zA-Z0-9.-]*[a-zA-Z0-9])?$/.test(host)) {
+    throw new Error('Invalid PACS host');
+  }
+
+  const port = Number(conn.port);
+  if (!Number.isInteger(port) || port < 1 || port > 65535) {
+    throw new Error('Invalid PACS port');
+  }
+
+  let localPort = Number(conn.localPort);
+  if (!Number.isFinite(localPort) || localPort === 0) localPort = 11112;
+  if (!Number.isInteger(localPort) || localPort < 1024 || localPort > 65535) {
+    throw new Error('Invalid localPort');
+  }
+
+  const aeKeys = ['callingAe', 'calledAe', 'localAe'];
+  const out = {
+    host,
+    port,
+    localPort,
+    callingAe: 'SLICE',
+    calledAe: 'PACS',
+    localAe: 'SLICE',
+  };
+  for (const key of aeKeys) {
+    if (conn[key] == null || conn[key] === '') continue;
+    const ae = String(conn[key]).trim();
+    if (ae.length === 0 || ae.length > 16) throw new Error(`Invalid ${key}`);
+    if (!/^[A-Za-z0-9 _.-]+$/.test(ae)) throw new Error(`Invalid ${key}`);
+    out[key] = ae;
+  }
+  if (!out.localAe) out.localAe = out.callingAe;
+  return out;
+}
+
+/** Bind dcmjs-dimse Server to 127.0.0.1 (library listen(port) binds all interfaces). */
+function listenLocalhost(server, port) {
+  return new Promise((resolve, reject) => {
+    const orig = net.Server.prototype.listen;
+    let restored = false;
+    const restore = () => {
+      if (!restored) {
+        restored = true;
+        net.Server.prototype.listen = orig;
+      }
+    };
+    net.Server.prototype.listen = function sliceLocalListen(...args) {
+      if (typeof args[0] === 'number') {
+        restore();
+        const cb = typeof args[args.length - 1] === 'function' ? args[args.length - 1] : undefined;
+        return orig.call(this, args[0], '127.0.0.1', cb);
+      }
+      return orig.apply(this, args);
+    };
+    const onErr = (e) => {
+      restore();
+      reject(e instanceof Error ? e : new Error(String(e)));
+    };
+    server.once('networkError', onErr);
+    server.once('listening', () => {
+      restore();
+      server.removeListener('networkError', onErr);
+      resolve();
+    });
+    try {
+      server.listen(port);
+    } catch (e) {
+      restore();
+      reject(e instanceof Error ? e : new Error(String(e)));
+    }
+  });
+}
+
+function createReceiveScp(saveDir, savedFiles, onFile, aePolicy) {
   let counter = 0;
+  const expectedCalled = normalizeAe(aePolicy?.localAe);
+  const expectedCalling = normalizeAe(aePolicy?.peerAe);
 
   class SliceStoreScp extends Scp {
     constructor(socket, opts) {
@@ -80,6 +178,25 @@ function createReceiveScp(saveDir, savedFiles, onFile) {
 
     associationRequested(association) {
       this.association = association;
+      const called = normalizeAe(association.getCalledAeTitle?.());
+      const calling = normalizeAe(association.getCallingAeTitle?.());
+      if (expectedCalled && called && called !== expectedCalled) {
+        this.sendAssociationReject(
+          RejectResult.Permanent,
+          RejectSource.ServiceUser,
+          RejectReason.CalledAeNotRecognized,
+        );
+        return;
+      }
+      if (expectedCalling && calling && calling !== expectedCalling) {
+        this.sendAssociationReject(
+          RejectResult.Permanent,
+          RejectSource.ServiceUser,
+          RejectReason.CallingAeNotRecognized,
+        );
+        return;
+      }
+
       association.setMaxPduLength(65536);
       const contexts = association.getPresentationContexts();
       for (const c of contexts) {
@@ -298,27 +415,25 @@ async function pacsMove(conn, studyInstanceUid, opts = {}) {
   }
 
   const saveDir = await fs.mkdtemp(path.join(os.tmpdir(), 'slice-pacs-'));
+  registerSessionTemp(saveDir);
   const savedFiles = [];
-  const ScpClass = createReceiveScp(saveDir, savedFiles, (_filePath, count) => {
-    onProgress?.(count);
-  });
+  const localAe = conn.localAe || conn.callingAe || 'SLICE';
+  const ScpClass = createReceiveScp(
+    saveDir,
+    savedFiles,
+    (_filePath, count) => {
+      onProgress?.(count);
+    },
+    { localAe, peerAe: conn.calledAe },
+  );
   const server = new Server(ScpClass);
 
   const localPort = Number(conn.localPort) || 11112;
-  const localAe = conn.localAe || conn.callingAe || 'SLICE';
 
   try {
     abortIfCancelled(isCancelled);
 
-    await new Promise((resolve, reject) => {
-      server.once('networkError', reject);
-      try {
-        server.listen(localPort);
-        resolve();
-      } catch (e) {
-        reject(e);
-      }
-    });
+    await listenLocalhost(server, localPort);
 
     await new Promise((r) => setTimeout(r, 150));
     abortIfCancelled(isCancelled);
@@ -394,6 +509,7 @@ async function pacsGet(conn, studyInstanceUid, opts = {}) {
   }
 
   const saveDir = await fs.mkdtemp(path.join(os.tmpdir(), 'slice-pacs-'));
+  registerSessionTemp(saveDir);
   const savedFiles = [];
   let counter = 0;
 
@@ -483,6 +599,7 @@ module.exports = {
   pacsMove,
   pacsGet,
   pacsStore,
+  validatePacsConn,
   datasetToPlain,
   normalizeFindHit,
 };
