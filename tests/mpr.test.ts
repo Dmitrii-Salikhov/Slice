@@ -5,6 +5,11 @@ import {
   maxIndex,
   sampleVolume,
   defaultWl,
+  resolveMprBasis,
+  planeIndexFromCursor,
+  cursorFromPlaneIndex,
+  crosshairInMprPlane,
+  cursorFromMprPlaneClick,
 } from '../src/viewer/mpr';
 import { makeInstance, makeVolume } from './helpers';
 import type { DicomSeries } from '../src/dicom/types';
@@ -197,5 +202,90 @@ describe('mpr', () => {
     const vol = buildVolume(series);
     expect(vol.data).toBeInstanceOf(Int16Array);
     expect(sampleVolume(vol, 0, 0, 1)).toBe(1);
+  });
+
+  it('resolveMprBasis falls back to stack without geometry', () => {
+    const vol = makeVolume([4, 4, 4]);
+    expect(resolveMprBasis(vol, 'patient')).toBe('patient');
+    expect(resolveMprBasis(vol, 'stack')).toBe('stack');
+    vol.geometry = null;
+    expect(resolveMprBasis(vol, 'patient')).toBe('stack');
+  });
+
+  it('patient coronal/sagittal spacing uses mm (anisotropic Z)', () => {
+    const vol = makeVolume([8, 8, 8]); // spacing [1,1,2]
+    const coronal = extractMprSlice(vol, 'coronal', 3, 'patient');
+    const sagittal = extractMprSlice(vol, 'sagittal', 3, 'patient');
+    expect(coronal.spacing.row).toBeGreaterThan(coronal.spacing.col * 1.5);
+    expect(sagittal.spacing.row).toBeGreaterThan(sagittal.spacing.col * 1.5);
+  });
+
+  it('patient planeIndex ↔ cursor round-trips for all planes', () => {
+    const vol = makeVolume([8, 8, 8]);
+    const cursor = { x: 2, y: 3, z: 4 };
+    for (const plane of ['axial', 'coronal', 'sagittal'] as const) {
+      const idx = planeIndexFromCursor(vol, plane, cursor, 'patient');
+      const next = cursorFromPlaneIndex(vol, plane, idx, cursor, 'patient');
+      const back = planeIndexFromCursor(vol, plane, next, 'patient');
+      expect(back).toBe(idx);
+    }
+  });
+
+  it('patient crosshair ↔ click round-trips on axial', () => {
+    const vol = makeVolume([8, 8, 8]);
+    const cursor = { x: 2.5, y: 3.5, z: 4 };
+    const slice = extractMprSlice(vol, 'axial', planeIndexFromCursor(vol, 'axial', cursor, 'patient'), 'patient');
+    const ch = crosshairInMprPlane(vol, 'axial', cursor, 'patient', slice);
+    const clicked = cursorFromMprPlaneClick(vol, 'axial', ch.u, ch.v, cursor, 'patient', slice);
+    expect(clicked.x).toBeCloseTo(cursor.x, 0);
+    expect(clicked.y).toBeCloseTo(cursor.y, 0);
+  });
+
+  it('stack crosshair helpers match voxel indices', () => {
+    const vol = makeVolume([8, 8, 8]);
+    const cursor = { x: 2, y: 3, z: 4 };
+    const axial = extractMprSlice(vol, 'axial', 4, 'stack');
+    expect(crosshairInMprPlane(vol, 'axial', cursor, 'stack', axial)).toEqual({ u: 2, v: 3 });
+    const fromClick = cursorFromMprPlaneClick(vol, 'axial', 5, 6, cursor, 'stack', axial);
+    expect(fromClick).toEqual({ x: 5, y: 6, z: 4 });
+  });
+
+  it('patient maxIndex is positive for all planes', () => {
+    const vol = makeVolume([8, 8, 12]);
+    expect(maxIndex(vol, 'axial', 'patient')).toBeGreaterThan(0);
+    expect(maxIndex(vol, 'coronal', 'patient')).toBeGreaterThan(0);
+    expect(maxIndex(vol, 'sagittal', 'patient')).toBeGreaterThan(0);
+  });
+
+  it('buildVolume attaches patient geometry from IOP/IPP', () => {
+    const instances = [0, 1, 2].map((z) =>
+      makeInstance({
+        rows: 4,
+        columns: 4,
+        fill: z,
+        imagePositionPatient: [0, 0, z * 2],
+        imageOrientationPatient: {
+          rowCosines: [1, 0, 0],
+          colCosines: [0, 1, 0],
+        },
+        pixelSpacing: { row: 0.5, col: 0.5 },
+        sopInstanceUID: `s${z}`,
+      }),
+    );
+    const series: DicomSeries = {
+      seriesInstanceUID: 'se',
+      studyInstanceUID: 'st',
+      seriesDescription: 'CT',
+      modality: 'CT',
+      patientName: 'P',
+      patientId: '1',
+      studyDescription: 'S',
+      instances,
+    };
+    const vol = buildVolume(series);
+    expect(vol.geometry).not.toBeNull();
+    expect(vol.geometry!.axisX).toEqual([1, 0, 0]);
+    expect(vol.geometry!.axisY).toEqual([0, 1, 0]);
+    expect(resolveMprBasis(vol, 'patient')).toBe('patient');
   });
 });

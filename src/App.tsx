@@ -79,7 +79,7 @@ export default function App() {
   const { t } = useLocale();
   const { reportError } = useErrorLog();
   const { reportUpdate } = useUpdateLog();
-  const [appVersion, setAppVersion] = useState('1.0.4');
+  const [appVersion, setAppVersion] = useState('1.0.5');
   const [updateResult, setUpdateResult] = useState<Extract<
     UpdateCheckResult,
     { status: 'available' }

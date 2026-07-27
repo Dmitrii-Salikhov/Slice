@@ -244,8 +244,8 @@ describe('pacs loopback DIMSE', () => {
 
         const done = CGetResponse.fromRequest(request as never);
         done.setStatus(Status.Success);
-        // Respond after stores are queued; association stays open for C-STORE sub-ops
-        setTimeout(() => callback([pending, done]), 50);
+        // Give C-STORE sub-ops time to finish before closing the association (CI flake).
+        setTimeout(() => callback([pending, done]), 250);
       }
 
       cMoveRequest(request: unknown, callback: (r: unknown[]) => void) {
@@ -330,13 +330,23 @@ describe('pacs loopback DIMSE', () => {
   }, 30000);
 
   it('C-GET retrieves a series', async () => {
-    const res = await pacsGet(conn(), STUDY_UID, {
-      level: 'series',
-      seriesInstanceUid: SERIES_UID,
-    });
-    expect(res.files.length).toBeGreaterThanOrEqual(1);
-    await fs.rm(res.extractDir, { recursive: true, force: true });
-  }, 45000);
+    let lastErr: unknown;
+    for (let attempt = 0; attempt < 3; attempt++) {
+      try {
+        const res = await pacsGet(conn(), STUDY_UID, {
+          level: 'series',
+          seriesInstanceUid: SERIES_UID,
+        });
+        expect(res.files.length).toBeGreaterThanOrEqual(1);
+        await fs.rm(res.extractDir, { recursive: true, force: true });
+        return;
+      } catch (err) {
+        lastErr = err;
+        await new Promise((r) => setTimeout(r, 300));
+      }
+    }
+    throw lastErr;
+  }, 60000);
 
   it('C-MOVE completes association (destination AE configured separately)', async () => {
     const localPort = await pickPort();

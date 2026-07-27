@@ -33,12 +33,22 @@ describe('path allowlist', () => {
   });
 
   it('rejects broad filesystem roots', () => {
-    expect(isBroadFilesystemRoot('/')).toBe(true);
-    expect(isBroadFilesystemRoot('/Users')).toBe(true);
-    expect(isBroadFilesystemRoot('/tmp')).toBe(true);
     expect(isBroadFilesystemRoot(os.homedir())).toBe(true);
-    expect(() => allowRoot('/')).toThrow(/too broad/);
-    expect(() => allowRoot('/tmp')).toThrow(/too broad/);
+    if (process.platform === 'win32') {
+      expect(isBroadFilesystemRoot('C:\\')).toBe(true);
+      expect(isBroadFilesystemRoot('C:\\Users')).toBe(true);
+      expect(isBroadFilesystemRoot('C:\\Windows')).toBe(true);
+      expect(isBroadFilesystemRoot('C:\\Program Files')).toBe(true);
+      expect(() => allowRoot('C:\\')).toThrow(/too broad/);
+      // Drive-relative /tmp is not a Unix root on Windows.
+      expect(isBroadFilesystemRoot('/tmp')).toBe(false);
+    } else {
+      expect(isBroadFilesystemRoot('/')).toBe(true);
+      expect(isBroadFilesystemRoot('/Users')).toBe(true);
+      expect(isBroadFilesystemRoot('/tmp')).toBe(true);
+      expect(() => allowRoot('/')).toThrow(/too broad/);
+      expect(() => allowRoot('/tmp')).toThrow(/too broad/);
+    }
   });
 
   it('allows exact files and write targets from dialogs', () => {

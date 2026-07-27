@@ -1,6 +1,6 @@
 {
   "name": "slice",
-  "version": "1.0.4",
+  "version": "1.0.5",
   "private": true,
   "description": "Local desktop DICOM viewer with W/L and MPR",
   "author": "Slice",

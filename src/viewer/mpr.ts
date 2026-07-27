@@ -445,8 +445,6 @@ export function planeIndexFromCursor(
   const [sx, sy, sz] = volume.spacing;
   const stepN = plane === 'axial' ? sz : plane === 'coronal' ? sy : sx;
   const nCount = Math.max(1, Math.round((extents.nMax - extents.nMin) / (stepN > 0 ? stepN : 1)));
-  const d = patient[0] - extents.center[0]; // wrong - need full vector
-  void d;
   const rel = [
     patient[0] - extents.center[0],
     patient[1] - extents.center[1],

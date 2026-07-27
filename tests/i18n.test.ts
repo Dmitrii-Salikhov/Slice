@@ -45,6 +45,12 @@ describe('i18n', () => {
       'document.openExternal',
       'pacs.profiles',
       'pacs.retrieveProgress',
+      'mpr.layoutSingle',
+      'mpr.layoutQuad',
+      'mpr.basisPatient',
+      'mpr.basisStack',
+      'mpr.basisPatientTip',
+      'mpr.basisStackTip',
     ] as const) {
       expect(dictionaries.en[key].length).toBeGreaterThan(0);
       expect(dictionaries.ru[key].length).toBeGreaterThan(0);
@@ -53,5 +59,7 @@ describe('i18n', () => {
     expect(dictionaries.ru['errorLog.title']).toBe('Лог ошибок');
     expect(dictionaries.ru['dicomdir.title']).toContain('DICOMDIR');
     expect(dictionaries.en['pacs.levelSeries']).toBe('Series');
+    expect(dictionaries.en['mpr.basisPatient']).toBe('Patient');
+    expect(dictionaries.ru['mpr.basisStack']).toBe('Стек');
   });
 });
