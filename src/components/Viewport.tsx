@@ -36,6 +36,8 @@ type Props = {
   invert?: boolean;
   flipH?: boolean;
   flipV?: boolean;
+  /** Called when WebGL fails; parent should disable GL and retry with Canvas. */
+  onWebGlFailed?: () => void;
 };
 
 type DragMode = 'nav' | 'length' | 'roi' | 'arrow';
@@ -61,6 +63,7 @@ export function Viewport({
   invert = false,
   flipH = false,
   flipV = false,
+  onWebGlFailed,
 }: Props) {
   const { t } = useLocale();
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -90,34 +93,19 @@ export function Viewport({
 
   const isColor = !!(instance?.colorRgba && instance.colorRgba.length > 0);
 
+  const glFailedRef = useRef(false);
+
   const paint = () => {
     const canvas = canvasRef.current;
     if (!canvas || !instance) return;
     const pixels = getPixelBuffer(instance);
     if (!pixels && !instance.colorRgba) return;
 
-    if (useWebGl && glRef.current && (pixels || instance.colorRgba)) {
-      glRef.current.draw({
-        pixels: pixels ?? new Float32Array(instance.columns * instance.rows),
-        width: instance.columns,
-        height: instance.rows,
-        windowLevel: wl,
-        zoom,
-        panX: pan.x,
-        panY: pan.y,
-        invert,
-        flipH,
-        flipV,
-        colorRgba: instance.colorRgba,
-      });
-    } else if (pixels) {
-      if (!grayRef.current || grayRef.current.length !== pixels.length) {
-        grayRef.current = new Uint8ClampedArray(pixels.length);
-      }
-      renderSliceToCanvas(
-        canvas,
-        {
-          pixels,
+    let drewWithGl = false;
+    if (useWebGl && glRef.current && (pixels || instance.colorRgba) && !glFailedRef.current) {
+      try {
+        glRef.current.draw({
+          pixels: pixels ?? new Float32Array(instance.columns * instance.rows),
           width: instance.columns,
           height: instance.rows,
           windowLevel: wl,
@@ -128,6 +116,40 @@ export function Viewport({
           flipH,
           flipV,
           colorRgba: instance.colorRgba,
+          spacingCol: instance.pixelSpacing.col,
+          spacingRow: instance.pixelSpacing.row,
+        });
+        drewWithGl = true;
+      } catch (e) {
+        console.error('[Viewport] WebGL draw failed', e);
+        glFailedRef.current = true;
+        glRef.current?.destroy();
+        glRef.current = null;
+        onWebGlFailed?.();
+      }
+    }
+
+    if (!drewWithGl && (pixels || instance.colorRgba)) {
+      const buffer = pixels ?? new Float32Array(instance.columns * instance.rows);
+      if (!grayRef.current || grayRef.current.length !== buffer.length) {
+        grayRef.current = new Uint8ClampedArray(buffer.length);
+      }
+      renderSliceToCanvas(
+        canvas,
+        {
+          pixels: buffer,
+          width: instance.columns,
+          height: instance.rows,
+          windowLevel: wl,
+          zoom,
+          panX: pan.x,
+          panY: pan.y,
+          invert,
+          flipH,
+          flipV,
+          colorRgba: instance.colorRgba,
+          spacingCol: instance.pixelSpacing.col,
+          spacingRow: instance.pixelSpacing.row,
         },
         grayRef.current,
       );
@@ -153,9 +175,24 @@ export function Viewport({
     const canvas = canvasRef.current;
     if (!wrap || !canvas) return;
 
+    const onContextLost = (e: Event) => {
+      e.preventDefault();
+      console.error('[Viewport] WebGL context lost');
+      glFailedRef.current = true;
+      glRef.current?.destroy();
+      glRef.current = null;
+      onWebGlFailed?.();
+    };
+
     if (useWebGl) {
+      glFailedRef.current = false;
       glRef.current?.destroy();
       glRef.current = createWebGlSliceRenderer(canvas);
+      if (!glRef.current) {
+        onWebGlFailed?.();
+      } else {
+        canvas.addEventListener('webglcontextlost', onContextLost);
+      }
     } else {
       glRef.current?.destroy();
       glRef.current = null;
@@ -180,6 +217,7 @@ export function Viewport({
     ro.observe(wrap);
     return () => {
       ro.disconnect();
+      canvas.removeEventListener('webglcontextlost', onContextLost);
       glRef.current?.destroy();
       glRef.current = null;
     };
@@ -226,6 +264,8 @@ export function Viewport({
       pan.y,
       flipH,
       flipV,
+      instance.pixelSpacing.col,
+      instance.pixelSpacing.row,
     );
   };
 

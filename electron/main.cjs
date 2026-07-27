@@ -145,8 +145,8 @@ function saveWindowBounds(win) {
 function applyCsp() {
   const isDev = !!process.env.VITE_DEV_SERVER_URL;
   const csp = isDev
-    ? "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' blob: data:; font-src 'self' data:; connect-src 'self' ws://127.0.0.1:* http://127.0.0.1:* ws://localhost:* http://localhost:*; object-src 'none'; base-uri 'self'; frame-src 'self' blob:;"
-    : "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' blob: data:; font-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'self'; frame-src 'self' blob:;";
+    ? "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval'; worker-src 'self' blob:; style-src 'self' 'unsafe-inline'; img-src 'self' blob: data:; font-src 'self' data:; connect-src 'self' ws://127.0.0.1:* http://127.0.0.1:* ws://localhost:* http://localhost:*; object-src 'none'; base-uri 'self'; frame-src 'self' blob:;"
+    : "default-src 'self'; script-src 'self'; worker-src 'self' blob:; style-src 'self' 'unsafe-inline'; img-src 'self' blob: data:; font-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'self'; frame-src 'self' blob:;";
 
   session.defaultSession.webRequest.onHeadersReceived((details, callback) => {
     const headers = { ...details.responseHeaders };
@@ -216,6 +216,16 @@ function createWindow() {
       pendingOpenPaths = [];
       deliverOpenPaths(paths);
     }
+  });
+
+  win.webContents.on('render-process-gone', (_event, details) => {
+    console.error('[slice] render-process-gone:', details.reason, details.exitCode);
+    // Do not auto-reload: that wipes the study and looks like a reset to the empty screen.
+    // User can reload manually (Cmd+R) after a rare crash.
+  });
+
+  win.webContents.on('did-fail-load', (_event, code, desc, url) => {
+    console.error('[slice] did-fail-load:', code, desc, url);
   });
 
   const devUrl = process.env.VITE_DEV_SERVER_URL;

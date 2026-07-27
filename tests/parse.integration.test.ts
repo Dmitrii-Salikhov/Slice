@@ -88,11 +88,15 @@ describe('parse + load integration (minimal DICOM)', () => {
     expect(volume.data instanceof Int16Array || volume.data instanceof Float32Array).toBe(
       true,
     );
-    const axial = extractMprSlice(volume, 'axial', 4);
+    const axial = extractMprSlice(volume, 'axial', 4, 'stack');
     expect(axial.pixels.length).toBe(16 * 16);
-    const sag = extractMprSlice(volume, 'sagittal', 8);
+    const sag = extractMprSlice(volume, 'sagittal', 8, 'stack');
     expect(sag.width).toBe(16);
     expect(sag.height).toBe(8);
+    expect(volume.geometry).toBeTruthy();
+    const patientSag = extractMprSlice(volume, 'sagittal', 0, 'patient');
+    expect(patientSag.width).toBeGreaterThan(0);
+    expect(patientSag.height).toBeGreaterThan(0);
   });
 
   it('skips non-dicom noise next to valid files', async () => {

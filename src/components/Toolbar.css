@@ -3,11 +3,14 @@
   flex-wrap: nowrap;
   align-items: center;
   gap: 6px;
-  flex: 1;
-  min-width: 0;
   overflow-x: auto;
   overflow-y: hidden;
   scrollbar-width: thin;
+}
+
+.toolbar--header {
+  flex: 1;
+  min-width: 0;
 }
 
 .toolbar__group {

@@ -1,14 +1,11 @@
 import { useEffect, useRef } from 'react';
-import type { MprPlane, ViewerTool, VolumeData, WindowLevel } from '../dicom/types';
+import type { MprBasis, MprPlane, ViewerTool, VolumeData, WindowLevel } from '../dicom/types';
 import type { VolumeCursor } from '../viewer/crosshair';
-import {
-  crosshairInPlane,
-  cursorFromPlaneClick,
-  clampCursor,
-} from '../viewer/crosshair';
+import { clampCursor } from '../viewer/crosshair';
 import { clientToImage } from '../viewer/math';
 import { drawOverlays, renderSliceToCanvas } from '../viewer/render';
 import type { MprSlice } from '../viewer/mpr';
+import { crosshairInMprPlane, cursorFromMprPlaneClick } from '../viewer/mpr';
 import { createWebGlSliceRenderer, type WebGlSliceRenderer } from '../viewer/webgl';
 import './Viewport.css';
 
@@ -27,6 +24,8 @@ type Props = {
   onSliceChange: (index: number) => void;
   onWlDelta: (dCenter: number, dWidth: number) => void;
   onZoomChange: (z: number) => void;
+  onWebGlFailed?: () => void;
+  mprBasis: MprBasis;
 };
 
 export function MprViewport({
@@ -44,6 +43,8 @@ export function MprViewport({
   onSliceChange,
   onWlDelta,
   onZoomChange,
+  onWebGlFailed,
+  mprBasis,
 }: Props) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const overlayRef = useRef<HTMLCanvasElement>(null);
@@ -51,21 +52,34 @@ export function MprViewport({
   const glRef = useRef<WebGlSliceRenderer | null>(null);
   const dragRef = useRef<{ x: number; y: number; active: boolean; cross?: boolean } | null>(null);
   const grayRef = useRef<Uint8ClampedArray | null>(null);
+  const glFailedRef = useRef(false);
+  const wheelRafRef = useRef<number | null>(null);
+  const pendingSliceRef = useRef<number | null>(null);
 
   const paint = () => {
     const canvas = canvasRef.current;
     if (!canvas) return;
+    const { col: spacingCol, row: spacingRow } = slice.spacing;
 
-    if (useWebGl && glRef.current) {
-      glRef.current.draw({
-        pixels: slice.pixels,
-        width: slice.width,
-        height: slice.height,
-        windowLevel: wl,
-        zoom,
-        panX: 0,
-        panY: 0,
-      });
+    if (useWebGl && glRef.current && !glFailedRef.current) {
+      try {
+        glRef.current.draw({
+          pixels: slice.pixels,
+          width: slice.width,
+          height: slice.height,
+          windowLevel: wl,
+          zoom,
+          panX: 0,
+          panY: 0,
+          spacingCol,
+          spacingRow,
+        });
+      } catch {
+        glFailedRef.current = true;
+        glRef.current?.destroy();
+        glRef.current = null;
+        onWebGlFailed?.();
+      }
     } else {
       if (!grayRef.current || grayRef.current.length !== slice.pixels.length) {
         grayRef.current = new Uint8ClampedArray(slice.pixels.length);
@@ -80,6 +94,8 @@ export function MprViewport({
           zoom,
           panX: 0,
           panY: 0,
+          spacingCol,
+          spacingRow,
         },
         grayRef.current,
       );
@@ -91,7 +107,7 @@ export function MprViewport({
         const ctx = overlay.getContext('2d');
         if (ctx) ctx.clearRect(0, 0, overlay.width, overlay.height);
       }
-      const ch = crosshairInPlane(plane, cursor, volume.dims);
+      const ch = crosshairInMprPlane(volume, plane, cursor, mprBasis, slice);
       drawOverlays(overlay, {
         width: slice.width,
         height: slice.height,
@@ -99,6 +115,7 @@ export function MprViewport({
         panX: 0,
         panY: 0,
         crosshair: ch,
+        spacing: slice.spacing,
       });
     }
   };
@@ -109,8 +126,10 @@ export function MprViewport({
     if (!wrap || !canvas) return;
 
     if (useWebGl) {
+      glFailedRef.current = false;
       glRef.current?.destroy();
       glRef.current = createWebGlSliceRenderer(canvas);
+      if (!glRef.current) onWebGlFailed?.();
     } else {
       glRef.current?.destroy();
       glRef.current = null;
@@ -118,7 +137,8 @@ export function MprViewport({
 
     const resize = () => {
       const rect = wrap.getBoundingClientRect();
-      const dpr = window.devicePixelRatio || 1;
+      // Cap DPR in MPR — full retina canvases + volume easily OOM the renderer.
+      const dpr = Math.min(1.25, window.devicePixelRatio || 1);
       if (glRef.current) {
         glRef.current.resize(rect.width, rect.height, dpr);
       } else {
@@ -151,7 +171,7 @@ export function MprViewport({
   useEffect(() => {
     paint();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [slice, wl, zoom, cursor, useWebGl, plane, volume.dims]);
+  }, [slice, wl, zoom, cursor, useWebGl, plane, volume, mprBasis]);
 
   const setCursorFromEvent = (e: { clientX: number; clientY: number }) => {
     const canvas = canvasRef.current;
@@ -165,14 +185,37 @@ export function MprViewport({
       zoom,
       0,
       0,
+      false,
+      false,
+      slice.spacing.col,
+      slice.spacing.row,
     );
     if (!img) return;
     const next = clampCursor(
-      cursorFromPlaneClick(plane, img.x, img.y, cursor, volume.dims),
+      cursorFromMprPlaneClick(volume, plane, img.x, img.y, cursor, mprBasis, slice),
       volume,
     );
     onCursorChange(next);
   };
+
+  const queueSliceChange = (index: number) => {
+    pendingSliceRef.current = index;
+    if (wheelRafRef.current != null) return;
+    wheelRafRef.current = window.requestAnimationFrame(() => {
+      wheelRafRef.current = null;
+      if (pendingSliceRef.current != null) {
+        onSliceChange(pendingSliceRef.current);
+        pendingSliceRef.current = null;
+      }
+    });
+  };
+
+  useEffect(
+    () => () => {
+      if (wheelRafRef.current != null) window.cancelAnimationFrame(wheelRafRef.current);
+    },
+    [],
+  );
 
   const onWheel = (e: React.WheelEvent) => {
     e.preventDefault();
@@ -181,7 +224,7 @@ export function MprViewport({
       return;
     }
     const delta = e.deltaY > 0 ? 1 : -1;
-    onSliceChange(Math.min(max, Math.max(0, slice.index + delta)));
+    queueSliceChange(Math.min(max, Math.max(0, slice.index + delta)));
   };
 
   const onPointerDown = (e: React.PointerEvent) => {
@@ -216,7 +259,7 @@ export function MprViewport({
     } else {
       const steps = Math.trunc(dy / 8);
       if (steps !== 0) {
-        onSliceChange(Math.min(max, Math.max(0, slice.index + steps)));
+        queueSliceChange(Math.min(max, Math.max(0, slice.index + steps)));
         drag.y = e.clientY;
       }
     }

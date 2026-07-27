@@ -147,13 +147,31 @@ export type DicomStudy = {
   series: DicomSeries[];
 };
 
+export type VolumeGeometry = {
+  /** Patient LPS (mm) of voxel index (0,0,0) — DICOM Image Position Patient */
+  origin: [number, number, number];
+  /** Unit direction of +column (DICOM IOP column cosines) */
+  axisX: [number, number, number];
+  /** Unit direction of +row (DICOM IOP row cosines) */
+  axisY: [number, number, number];
+  /** Unit direction of +slice (toward increasing stack index) */
+  axisZ: [number, number, number];
+  /** Copy of volume spacing [sx, sy, sz] used when geometry was built */
+  spacing: [number, number, number];
+};
+
 export type VolumeData = {
   /** Flattened [z][y][x] — Float32 or packed Int16 modality values */
   data: Float32Array | Int16Array;
   dims: [number, number, number]; // [cols, rows, slices] = [x, y, z]
   spacing: [number, number, number]; // [sx, sy, sz]
   windowLevel: WindowLevel;
+  /** Patient-space frame (RadiAnt-style). Absent → stack-only MPR. */
+  geometry?: VolumeGeometry | null;
 };
+
+/** How orthogonal MPR planes are defined. */
+export type MprBasis = 'patient' | 'stack';
 
 export type MprPlane = 'axial' | 'sagittal' | 'coronal';
 

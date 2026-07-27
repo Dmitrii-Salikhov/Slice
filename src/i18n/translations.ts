@@ -283,6 +283,18 @@ export type MessageKey =
   | 'mpr.cursor'
   | 'mpr.volume'
   | 'mpr.canvas'
+  | 'mpr.layout'
+  | 'mpr.layoutSingle'
+  | 'mpr.layoutQuad'
+  | 'mpr.layoutSingleTip'
+  | 'mpr.layoutQuadTip'
+  | 'mpr.plane'
+  | 'mpr.basis'
+  | 'mpr.basisPatient'
+  | 'mpr.basisStack'
+  | 'mpr.basisPatientTip'
+  | 'mpr.basisStackTip'
+  | 'mpr.basisPatientUnavailable'
   | 'viewport.webgl';
 
 type Dict = Record<MessageKey, string>;
@@ -570,6 +582,18 @@ const en: Dict = {
   'mpr.cursor': 'Cursor {x}, {y}, {z} · {hu} HU',
   'mpr.volume': 'Vol {dims} · {spacing} mm',
   'mpr.canvas': 'Canvas',
+  'mpr.layout': 'MPR layout',
+  'mpr.layoutSingle': '1 plane',
+  'mpr.layoutQuad': '4 planes',
+  'mpr.layoutSingleTip': 'Show one orthogonal plane',
+  'mpr.layoutQuadTip': 'Show axial, coronal, sagittal and oblique',
+  'mpr.plane': 'Plane',
+  'mpr.basis': 'MPR basis',
+  'mpr.basisPatient': 'Patient',
+  'mpr.basisStack': 'Stack',
+  'mpr.basisPatientTip': 'Anatomical planes in patient space (RadiAnt-style)',
+  'mpr.basisStackTip': 'Cut along acquisition voxel axes (legacy fallback)',
+  'mpr.basisPatientUnavailable': 'Patient geometry missing (IOP/IPP) — use Stack',
   'viewport.webgl': 'WebGL',
 };
 
@@ -856,6 +880,18 @@ const ru: Dict = {
   'mpr.cursor': 'Курсор {x}, {y}, {z} · {hu} HU',
   'mpr.volume': 'Объём {dims} · {spacing} мм',
   'mpr.canvas': 'Canvas',
+  'mpr.layout': 'Раскладка MPR',
+  'mpr.layoutSingle': '1 плоскость',
+  'mpr.layoutQuad': '4 плоскости',
+  'mpr.layoutSingleTip': 'Показать одну ортогональную плоскость',
+  'mpr.layoutQuadTip': 'Аксиал, коронал, сагитал и косая',
+  'mpr.plane': 'Плоскость',
+  'mpr.basis': 'Базис MPR',
+  'mpr.basisPatient': 'Пациент',
+  'mpr.basisStack': 'Стек',
+  'mpr.basisPatientTip': 'Анатомические плоскости в LPS (как RadiAnt)',
+  'mpr.basisStackTip': 'Срезы по осям захвата (запасной режим)',
+  'mpr.basisPatientUnavailable': 'Нет геометрии IOP/IPP — доступен только Стек',
   'viewport.webgl': 'WebGL',
 };
 

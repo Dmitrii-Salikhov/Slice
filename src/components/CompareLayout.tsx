@@ -35,6 +35,7 @@ type Props = {
   invert?: boolean;
   flipH?: boolean;
   flipV?: boolean;
+  onWebGlFailed?: () => void;
 };
 
 export function CompareLayout({
@@ -57,6 +58,7 @@ export function CompareLayout({
   invert = false,
   flipH = false,
   flipV = false,
+  onWebGlFailed,
 }: Props) {
   const { t } = useLocale();
 
@@ -85,6 +87,7 @@ export function CompareLayout({
           invert={invert}
           flipH={flipH}
           flipV={flipV}
+          onWebGlFailed={onWebGlFailed}
         />
       </div>
       <div className="compare__pane">
@@ -110,6 +113,7 @@ export function CompareLayout({
           invert={invert}
           flipH={flipH}
           flipV={flipV}
+          onWebGlFailed={onWebGlFailed}
         />
       </div>
     </div>

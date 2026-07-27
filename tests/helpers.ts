@@ -78,6 +78,13 @@ export function makeVolume(
     dims,
     spacing: [1, 1, 2],
     windowLevel: { windowCenter: 40, windowWidth: 400 },
+    geometry: {
+      origin: [0, 0, 0],
+      axisX: [1, 0, 0],
+      axisY: [0, 1, 0],
+      axisZ: [0, 0, 1],
+      spacing: [1, 1, 2],
+    },
   };
 }
 

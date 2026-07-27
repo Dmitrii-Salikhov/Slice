@@ -24,14 +24,17 @@ uniform vec2 u_pan;
 uniform float u_zoom;
 uniform vec2 u_imageSize;
 uniform vec2 u_canvasSize;
+uniform vec2 u_pixelSpacing;
 out vec4 outColor;
 
 void main() {
-  float fit = min(u_canvasSize.x / u_imageSize.x, u_canvasSize.y / u_imageSize.y);
-  float scale = fit * u_zoom;
-  vec2 draw = u_imageSize * scale;
+  vec2 phys = u_imageSize * u_pixelSpacing;
+  float fit = min(u_canvasSize.x / phys.x, u_canvasSize.y / phys.y);
+  float mmScale = fit * u_zoom;
+  vec2 draw = phys * mmScale;
   vec2 origin = (u_canvasSize - draw) * 0.5 + u_pan;
-  vec2 pixel = (v_uv * u_canvasSize - origin) / scale;
+  vec2 mm = (v_uv * u_canvasSize - origin) / mmScale;
+  vec2 pixel = mm / u_pixelSpacing;
   if (pixel.x < 0.0 || pixel.y < 0.0 || pixel.x >= u_imageSize.x || pixel.y >= u_imageSize.y) {
     outColor = vec4(0.0, 0.0, 0.0, 1.0);
     return;
@@ -87,6 +90,8 @@ export type WebGlSliceRenderer = {
     flipH?: boolean;
     flipV?: boolean;
     colorRgba?: Uint8ClampedArray;
+    spacingCol?: number;
+    spacingRow?: number;
   }) => void;
   resize: (cssWidth: number, cssHeight: number, dpr: number) => void;
   destroy: () => void;
@@ -148,6 +153,7 @@ export function createWebGlSliceRenderer(canvas: HTMLCanvasElement): WebGlSliceR
   const uZoom = gl.getUniformLocation(prog, 'u_zoom');
   const uImageSize = gl.getUniformLocation(prog, 'u_imageSize');
   const uCanvasSize = gl.getUniformLocation(prog, 'u_canvasSize');
+  const uPixelSpacing = gl.getUniformLocation(prog, 'u_pixelSpacing');
 
   let texW = 0;
   let texH = 0;
@@ -173,8 +179,25 @@ export function createWebGlSliceRenderer(canvas: HTMLCanvasElement): WebGlSliceR
       gl.viewport(0, 0, canvas.width, canvas.height);
     },
     draw(opts) {
-      const { pixels, width, height, windowLevel, zoom, panX, panY, invert, flipH, flipV, colorRgba } =
-        opts;
+      const {
+        pixels,
+        width,
+        height,
+        windowLevel,
+        zoom,
+        panX,
+        panY,
+        invert,
+        flipH,
+        flipV,
+        colorRgba,
+        spacingCol = 1,
+        spacingRow = 1,
+      } = opts;
+      const maxTex = gl.getParameter(gl.MAX_TEXTURE_SIZE) as number;
+      if (width > maxTex || height > maxTex) {
+        throw new Error(`Image ${width}x${height} exceeds GPU texture limit ${maxTex}`);
+      }
       gl.viewport(0, 0, canvas.width, canvas.height);
       gl.useProgram(prog);
       gl.bindTexture(gl.TEXTURE_2D, tex);
@@ -272,6 +295,11 @@ export function createWebGlSliceRenderer(canvas: HTMLCanvasElement): WebGlSliceR
       gl.uniform1f(uZoom, zoom);
       gl.uniform2f(uImageSize, width, height);
       gl.uniform2f(uCanvasSize, canvas.width, canvas.height);
+      gl.uniform2f(
+        uPixelSpacing,
+        spacingCol > 0 ? spacingCol : 1,
+        spacingRow > 0 ? spacingRow : 1,
+      );
       gl.drawArrays(gl.TRIANGLES, 0, 6);
     },
     destroy() {

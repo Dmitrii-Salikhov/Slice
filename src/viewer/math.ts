@@ -66,6 +66,18 @@ export function angleDeg(
   return (Math.acos(cos) * 180) / Math.PI;
 }
 
+/** Physical display size in mm (for anisotropic voxels / MPR). */
+export function physicalSize(
+  imageWidth: number,
+  imageHeight: number,
+  spacingCol = 1,
+  spacingRow = 1,
+): { w: number; h: number } {
+  const sc = spacingCol > 0 ? spacingCol : 1;
+  const sr = spacingRow > 0 ? spacingRow : 1;
+  return { w: imageWidth * sc, h: imageHeight * sr };
+}
+
 /** Map client point → image pixel coords given canvas fit/zoom/pan (+ optional flips). */
 export function clientToImage(
   clientX: number,
@@ -78,6 +90,8 @@ export function clientToImage(
   panY: number,
   flipH = false,
   flipV = false,
+  spacingCol = 1,
+  spacingRow = 1,
 ): { x: number; y: number } | null {
   const rect = canvas.getBoundingClientRect();
   const dpr = canvas.width / Math.max(1, rect.width);
@@ -85,14 +99,15 @@ export function clientToImage(
   const cy = (clientY - rect.top) * dpr;
   const vw = canvas.width;
   const vh = canvas.height;
-  const fit = Math.min(vw / imageWidth, vh / imageHeight);
-  const scaleFactor = fit * zoom;
-  const drawW = imageWidth * scaleFactor;
-  const drawH = imageHeight * scaleFactor;
+  const { w: physW, h: physH } = physicalSize(imageWidth, imageHeight, spacingCol, spacingRow);
+  const fit = Math.min(vw / physW, vh / physH);
+  const mmScale = fit * zoom; // canvas px per mm
+  const drawW = physW * mmScale;
+  const drawH = physH * mmScale;
   const dx = (vw - drawW) / 2 + panX;
   const dy = (vh - drawH) / 2 + panY;
-  let ix = (cx - dx) / scaleFactor;
-  let iy = (cy - dy) / scaleFactor;
+  let ix = (cx - dx) / (mmScale * (spacingCol > 0 ? spacingCol : 1));
+  let iy = (cy - dy) / (mmScale * (spacingRow > 0 ? spacingRow : 1));
   if (flipH) ix = imageWidth - ix;
   if (flipV) iy = imageHeight - iy;
   if (ix < -0.5 || iy < -0.5 || ix > imageWidth - 0.5 || iy > imageHeight - 0.5) {
@@ -112,19 +127,24 @@ export function imageToCanvas(
   panY: number,
   flipH = false,
   flipV = false,
+  spacingCol = 1,
+  spacingRow = 1,
 ): { x: number; y: number } {
   const vw = canvas.width;
   const vh = canvas.height;
-  const fit = Math.min(vw / imageWidth, vh / imageHeight);
-  const scaleFactor = fit * zoom;
-  const drawW = imageWidth * scaleFactor;
-  const drawH = imageHeight * scaleFactor;
+  const { w: physW, h: physH } = physicalSize(imageWidth, imageHeight, spacingCol, spacingRow);
+  const fit = Math.min(vw / physW, vh / physH);
+  const mmScale = fit * zoom;
+  const drawW = physW * mmScale;
+  const drawH = physH * mmScale;
   const dx = (vw - drawW) / 2 + panX;
   const dy = (vh - drawH) / 2 + panY;
   const sx = flipH ? imageWidth - ix : ix;
   const sy = flipV ? imageHeight - iy : iy;
+  const sc = spacingCol > 0 ? spacingCol : 1;
+  const sr = spacingRow > 0 ? spacingRow : 1;
   return {
-    x: dx + sx * scaleFactor,
-    y: dy + sy * scaleFactor,
+    x: dx + sx * sc * mmScale,
+    y: dy + sy * sr * mmScale,
   };
 }

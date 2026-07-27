@@ -1,6 +1,6 @@
 import type { Annotation, WindowLevel } from '../dicom/types';
 import { applyWindowLevel } from './windowLevel';
-import { imageToCanvas } from './math';
+import { imageToCanvas, physicalSize } from './math';
 
 export type RenderParams = {
   pixels: Float32Array | Int16Array;
@@ -15,6 +15,9 @@ export type RenderParams = {
   flipV?: boolean;
   /** Optional RGBA color buffer (length width*height*4). When set, skips VOI LUT. */
   colorRgba?: Uint8ClampedArray | null;
+  /** Pixel spacing in mm (col = X, row = Y). Defaults to 1×1 (square pixels). */
+  spacingCol?: number;
+  spacingRow?: number;
 };
 
 export type DraftOverlay =
@@ -48,6 +51,27 @@ export type OverlayParams = {
 /**
  * Draw a single slice into a 2D canvas with W/L, zoom and pan.
  */
+const offscreenByKey = new Map<string, HTMLCanvasElement>();
+
+function getOffscreen(width: number, height: number): HTMLCanvasElement {
+  const key = `${width}x${height}`;
+  let off = offscreenByKey.get(key);
+  if (!off) {
+    off = document.createElement('canvas');
+    off.width = width;
+    off.height = height;
+    offscreenByKey.set(key, off);
+    if (offscreenByKey.size > 4) {
+      const first = offscreenByKey.keys().next().value;
+      if (first && first !== key) offscreenByKey.delete(first);
+    }
+  } else if (off.width !== width || off.height !== height) {
+    off.width = width;
+    off.height = height;
+  }
+  return off;
+}
+
 export function renderSliceToCanvas(
   canvas: HTMLCanvasElement,
   params: RenderParams,
@@ -55,6 +79,8 @@ export function renderSliceToCanvas(
 ): void {
   const { pixels, width, height, windowLevel, zoom, panX, panY, invert, flipH, flipV, colorRgba } =
     params;
+  const spacingCol = params.spacingCol ?? 1;
+  const spacingRow = params.spacingRow ?? 1;
   const ctx = canvas.getContext('2d');
   if (!ctx) return;
 
@@ -76,9 +102,7 @@ export function renderSliceToCanvas(
     }
   }
 
-  const off = document.createElement('canvas');
-  off.width = width;
-  off.height = height;
+  const off = getOffscreen(width, height);
   const offCtx = off.getContext('2d');
   if (!offCtx) return;
   offCtx.putImageData(imageData, 0, 0);
@@ -88,17 +112,18 @@ export function renderSliceToCanvas(
   ctx.fillStyle = '#000';
   ctx.fillRect(0, 0, vw, vh);
 
-  const fit = Math.min(vw / width, vh / height);
-  const scale = fit * zoom;
-  const drawW = width * scale;
-  const drawH = height * scale;
+  const { w: physW, h: physH } = physicalSize(width, height, spacingCol, spacingRow);
+  const fit = Math.min(vw / physW, vh / physH);
+  const mmScale = fit * zoom;
+  const drawW = physW * mmScale;
+  const drawH = physH * mmScale;
   const dx = (vw - drawW) / 2 + panX;
   const dy = (vh - drawH) / 2 + panY;
 
   ctx.save();
   ctx.translate(dx + (flipH ? drawW : 0), dy + (flipV ? drawH : 0));
   ctx.scale(flipH ? -1 : 1, flipV ? -1 : 1);
-  ctx.imageSmoothingEnabled = scale < 1;
+  ctx.imageSmoothingEnabled = mmScale < 1;
   ctx.drawImage(off, 0, 0, drawW, drawH);
   ctx.restore();
 }
@@ -107,6 +132,8 @@ export function drawOverlays(canvas: HTMLCanvasElement, overlay: OverlayParams):
   const ctx = canvas.getContext('2d');
   if (!ctx) return;
   const { width, height, zoom, panX, panY, flipH = false, flipV = false } = overlay;
+  const spacingCol = overlay.spacing?.col ?? 1;
+  const spacingRow = overlay.spacing?.row ?? 1;
   const dpr = canvas.width / Math.max(1, canvas.clientWidth || canvas.width);
 
   ctx.save();
@@ -114,7 +141,20 @@ export function drawOverlays(canvas: HTMLCanvasElement, overlay: OverlayParams):
 
   if (overlay.crosshair) {
     const { u, v } = overlay.crosshair;
-    const p = imageToCanvas(u, v, canvas, width, height, zoom, panX, panY, flipH, flipV);
+    const p = imageToCanvas(
+      u,
+      v,
+      canvas,
+      width,
+      height,
+      zoom,
+      panX,
+      panY,
+      flipH,
+      flipV,
+      spacingCol,
+      spacingRow,
+    );
     ctx.strokeStyle = 'rgba(255, 180, 60, 0.9)';
     ctx.beginPath();
     ctx.moveTo(p.x, 0);
@@ -128,7 +168,20 @@ export function drawOverlays(canvas: HTMLCanvasElement, overlay: OverlayParams):
   }
 
   const toCanvas = (ix: number, iy: number) =>
-    imageToCanvas(ix, iy, canvas, width, height, zoom, panX, panY, flipH, flipV);
+    imageToCanvas(
+      ix,
+      iy,
+      canvas,
+      width,
+      height,
+      zoom,
+      panX,
+      panY,
+      flipH,
+      flipV,
+      spacingCol,
+      spacingRow,
+    );
 
   const drawSeg = (x0: number, y0: number, x1: number, y1: number, label?: string) => {
     const a = toCanvas(x0, y0);

@@ -1,6 +1,6 @@
-import { useEffect, useMemo, useRef } from 'react';
-import type { MprPlane, ViewerTool, VolumeData, WindowLevel } from '../dicom/types';
-import type { VolumeCursor } from '../viewer/crosshair';
+import { useDeferredValue, useMemo } from 'react';
+import type { MprBasis, MprPlane, ViewerTool, VolumeData, WindowLevel } from '../dicom/types';
+import type { VolumeCursor, ObliquePlane } from '../viewer/crosshair';
 import {
   defaultOblique,
   extractObliqueSlice,
@@ -8,15 +8,24 @@ import {
   rotateOblique,
   setObliqueCenter,
   offsetOrigin,
+  clampCursor,
 } from '../viewer/crosshair';
-import { extractMprSlice, maxIndex } from '../viewer/mpr';
-import { drawOverlays, renderSliceToCanvas } from '../viewer/render';
-import { createWebGlSliceRenderer, type WebGlSliceRenderer } from '../viewer/webgl';
+import {
+  extractMprSlice,
+  maxIndex,
+  planeIndexFromCursor,
+  cursorFromPlaneIndex,
+  resolveMprBasis,
+} from '../viewer/mpr';
+import { hasPatientGeometry } from '../viewer/volumeGeometry';
 import { useLocale } from '../i18n/LocaleContext';
 import type { MessageKey } from '../i18n/translations';
 import { MprViewport } from './MprViewport';
+import { ObliqueViewport } from './ObliqueViewport';
 import './MprLayout.css';
 import './Viewport.css';
+
+export type MprLayoutMode = 'quad' | 'single';
 
 type Props = {
   volume: VolumeData;
@@ -28,10 +37,17 @@ type Props = {
   zoom: number;
   onZoomChange: (z: number) => void;
   useWebGl: boolean;
+  onWebGlFailed?: () => void;
   yaw: number;
   pitch: number;
   onYawChange: (v: number) => void;
   onPitchChange: (v: number) => void;
+  layoutMode: MprLayoutMode;
+  onLayoutModeChange: (mode: MprLayoutMode) => void;
+  singlePlane: MprPlane;
+  onSinglePlaneChange: (plane: MprPlane) => void;
+  mprBasis: MprBasis;
+  onMprBasisChange: (basis: MprBasis) => void;
 };
 
 const PLANES: { plane: MprPlane; titleKey: MessageKey }[] = [
@@ -39,6 +55,19 @@ const PLANES: { plane: MprPlane; titleKey: MessageKey }[] = [
   { plane: 'coronal', titleKey: 'mpr.coronal' },
   { plane: 'sagittal', titleKey: 'mpr.sagittal' },
 ];
+
+const OBLIQUE_MAX = 256;
+
+function downscaleObliquePlane(plane: ObliquePlane): ObliquePlane {
+  const maxDim = Math.max(plane.width, plane.height);
+  if (maxDim <= OBLIQUE_MAX) return plane;
+  const scale = OBLIQUE_MAX / maxDim;
+  return {
+    ...plane,
+    width: Math.max(32, Math.round(plane.width * scale)),
+    height: Math.max(32, Math.round(plane.height * scale)),
+  };
+}
 
 export function MprLayout({
   volume,
@@ -50,292 +79,231 @@ export function MprLayout({
   zoom,
   onZoomChange,
   useWebGl,
+  onWebGlFailed,
   yaw,
   pitch,
   onYawChange,
   onPitchChange,
+  layoutMode,
+  onLayoutModeChange,
+  singlePlane,
+  onSinglePlaneChange,
+  mprBasis,
+  onMprBasisChange,
 }: Props) {
   const { t } = useLocale();
+  const deferredYaw = useDeferredValue(yaw);
+  const deferredPitch = useDeferredValue(pitch);
+  const deferredCursor = useDeferredValue(cursor);
+  const basis = resolveMprBasis(volume, mprBasis);
+  const canPatient = hasPatientGeometry(volume);
 
-  const indices = useMemo(
-    () => ({
-      axial: Math.round(cursor.z),
-      coronal: Math.round(cursor.y),
-      sagittal: Math.round(cursor.x),
-    }),
-    [cursor],
+  const axialIndex = planeIndexFromCursor(volume, 'axial', cursor, basis);
+  const coronalIndex = planeIndexFromCursor(volume, 'coronal', cursor, basis);
+  const sagittalIndex = planeIndexFromCursor(volume, 'sagittal', cursor, basis);
+
+  const axialSlice = useMemo(
+    () => extractMprSlice(volume, 'axial', axialIndex, basis),
+    [volume, axialIndex, basis],
+  );
+  const coronalSlice = useMemo(
+    () => extractMprSlice(volume, 'coronal', coronalIndex, basis),
+    [volume, coronalIndex, basis],
+  );
+  const sagittalSlice = useMemo(
+    () => extractMprSlice(volume, 'sagittal', sagittalIndex, basis),
+    [volume, sagittalIndex, basis],
   );
 
-  const slices = useMemo(() => {
-    return Object.fromEntries(
-      PLANES.map(({ plane }) => [plane, extractMprSlice(volume, plane, indices[plane])]),
-    ) as Record<MprPlane, ReturnType<typeof extractMprSlice>>;
-  }, [volume, indices]);
+  const slices = useMemo(
+    () => ({
+      axial: axialSlice,
+      coronal: coronalSlice,
+      sagittal: sagittalSlice,
+    }),
+    [axialSlice, coronalSlice, sagittalSlice],
+  );
 
   const oblique = useMemo(() => {
-    const base = setObliqueCenter(defaultOblique(volume), cursor);
-    return rotateOblique(base, yaw, pitch);
-  }, [volume, cursor, yaw, pitch]);
+    const base = setObliqueCenter(defaultOblique(volume), deferredCursor);
+    return downscaleObliquePlane(rotateOblique(base, deferredYaw, deferredPitch));
+  }, [volume, deferredCursor, deferredYaw, deferredPitch]);
 
-  const obliqueSlice = useMemo(() => extractObliqueSlice(volume, oblique), [volume, oblique]);
+  const obliqueSlice = useMemo(
+    () => (layoutMode === 'quad' ? extractObliqueSlice(volume, oblique) : null),
+    [layoutMode, volume, oblique],
+  );
+
   const hu = probeVolume(volume, cursor);
 
   const setPlaneIndex = (plane: MprPlane, index: number) => {
-    if (plane === 'axial') onCursorChange({ ...cursor, z: index });
-    else if (plane === 'coronal') onCursorChange({ ...cursor, y: index });
-    else onCursorChange({ ...cursor, x: index });
+    onCursorChange(
+      clampCursor(cursorFromPlaneIndex(volume, plane, index, cursor, basis), volume),
+    );
   };
 
-  return (
-    <div className="mpr">
-      {PLANES.map(({ plane, titleKey }) => (
-        <div key={plane} className={`mpr__cell mpr__cell--${plane}`}>
-          <MprViewport
-            label={t(titleKey)}
-            plane={plane}
-            slice={slices[plane]}
-            max={maxIndex(volume, plane)}
-            volume={volume}
-            cursor={cursor}
-            onCursorChange={onCursorChange}
-            wl={wl}
-            tool={tool}
-            zoom={zoom}
-            useWebGl={useWebGl}
-            onSliceChange={(i) => setPlaneIndex(plane, i)}
-            onWlDelta={onWlDelta}
-            onZoomChange={onZoomChange}
-          />
-        </div>
-      ))}
-      <div className="mpr__cell mpr__cell--oblique">
-        <ObliqueViewport
-          slice={obliqueSlice}
-          wl={wl}
-          zoom={zoom}
-          useWebGl={useWebGl}
-          onWlDelta={onWlDelta}
-          onZoomChange={onZoomChange}
-          onScroll={(d) => {
-            const next = offsetOrigin(oblique, d);
-            onCursorChange({
-              x: next.origin[0],
-              y: next.origin[1],
-              z: next.origin[2],
-            });
-          }}
-          tool={tool}
-          obliqueLabel={t('mpr.oblique')}
-          canvasLabel={t('mpr.canvas')}
-          webglLabel={t('viewport.webgl')}
-        />
-        <div className="mpr__oblique-controls">
-          <label title={t('mpr.yaw')}>
-            {t('mpr.yaw')}
-            <input
-              type="range"
-              min={-180}
-              max={180}
-              value={yaw}
-              onChange={(e) => onYawChange(Number(e.target.value))}
-              title={t('mpr.yaw')}
-            />
-            <span>{yaw}°</span>
-          </label>
-          <label title={t('mpr.pitch')}>
-            {t('mpr.pitch')}
-            <input
-              type="range"
-              min={-90}
-              max={90}
-              value={pitch}
-              onChange={(e) => onPitchChange(Number(e.target.value))}
-              title={t('mpr.pitch')}
-            />
-            <span>{pitch}°</span>
-          </label>
-          <p>
-            {t('mpr.cursor', {
-              x: cursor.x.toFixed(1),
-              y: cursor.y.toFixed(1),
-              z: cursor.z.toFixed(1),
-              hu: hu.toFixed(1),
-            })}
-          </p>
-          <p>
-            {t('mpr.volume', {
-              dims: volume.dims.join('×'),
-              spacing: volume.spacing.map((s) => s.toFixed(2)).join('×'),
-            })}
-          </p>
-        </div>
-      </div>
-    </div>
+  const renderViewport = (plane: MprPlane, titleKey: MessageKey) => (
+    <MprViewport
+      label={t(titleKey)}
+      plane={plane}
+      slice={slices[plane]}
+      max={maxIndex(volume, plane, basis)}
+      volume={volume}
+      cursor={cursor}
+      onCursorChange={onCursorChange}
+      wl={wl}
+      tool={tool}
+      zoom={zoom}
+      useWebGl={useWebGl}
+      onWebGlFailed={onWebGlFailed}
+      onSliceChange={(i) => setPlaneIndex(plane, i)}
+      onWlDelta={onWlDelta}
+      onZoomChange={onZoomChange}
+      mprBasis={basis}
+    />
   );
-}
-
-function ObliqueViewport({
-  slice,
-  wl,
-  zoom,
-  useWebGl,
-  onWlDelta,
-  onZoomChange,
-  onScroll,
-  tool,
-  obliqueLabel,
-  canvasLabel,
-  webglLabel,
-}: {
-  slice: ReturnType<typeof extractObliqueSlice>;
-  wl: WindowLevel;
-  zoom: number;
-  useWebGl: boolean;
-  onWlDelta: (dC: number, dW: number) => void;
-  onZoomChange: (z: number) => void;
-  onScroll: (delta: number) => void;
-  tool: ViewerTool;
-  obliqueLabel: string;
-  canvasLabel: string;
-  webglLabel: string;
-}) {
-  const canvasRef = useRef<HTMLCanvasElement>(null);
-  const wrapRef = useRef<HTMLDivElement>(null);
-  const glRef = useRef<WebGlSliceRenderer | null>(null);
-  const grayRef = useRef<Uint8ClampedArray | null>(null);
-  const dragRef = useRef<{ x: number; y: number; active: boolean } | null>(null);
-
-  useEffect(() => {
-    const wrap = wrapRef.current;
-    const canvas = canvasRef.current;
-    if (!wrap || !canvas) return;
-
-    if (useWebGl) {
-      glRef.current?.destroy();
-      glRef.current = createWebGlSliceRenderer(canvas);
-    } else {
-      glRef.current?.destroy();
-      glRef.current = null;
-    }
-
-    const paint = () => {
-      if (useWebGl && glRef.current) {
-        glRef.current.draw({
-          pixels: slice.pixels,
-          width: slice.width,
-          height: slice.height,
-          windowLevel: wl,
-          zoom,
-          panX: 0,
-          panY: 0,
-        });
-      } else {
-        if (!grayRef.current || grayRef.current.length !== slice.pixels.length) {
-          grayRef.current = new Uint8ClampedArray(slice.pixels.length);
-        }
-        renderSliceToCanvas(
-          canvas,
-          {
-            pixels: slice.pixels,
-            width: slice.width,
-            height: slice.height,
-            windowLevel: wl,
-            zoom,
-            panX: 0,
-            panY: 0,
-          },
-          grayRef.current,
-        );
-        drawOverlays(canvas, {
-          width: slice.width,
-          height: slice.height,
-          zoom,
-          panX: 0,
-          panY: 0,
-          crosshair: { u: (slice.width - 1) / 2, v: (slice.height - 1) / 2 },
-        });
-      }
-    };
-
-    const resize = () => {
-      const rect = wrap.getBoundingClientRect();
-      const dpr = window.devicePixelRatio || 1;
-      if (glRef.current) glRef.current.resize(rect.width, rect.height, dpr);
-      else {
-        canvas.width = Math.max(1, Math.floor(rect.width * dpr));
-        canvas.height = Math.max(1, Math.floor(rect.height * dpr));
-        canvas.style.width = `${rect.width}px`;
-        canvas.style.height = `${rect.height}px`;
-      }
-      paint();
-    };
-
-    resize();
-    const ro = new ResizeObserver(resize);
-    ro.observe(wrap);
-    return () => {
-      ro.disconnect();
-      glRef.current?.destroy();
-      glRef.current = null;
-    };
-  }, [slice, wl, zoom, useWebGl]);
 
   return (
-    <div
-      className="viewport mpr__oblique-view"
-      ref={wrapRef}
-      onWheel={(e) => {
-        e.preventDefault();
-        if (e.ctrlKey || tool === 'zoom') {
-          onZoomChange(Math.min(8, Math.max(0.2, zoom * (e.deltaY > 0 ? 0.9 : 1.1))));
-        } else {
-          onScroll(e.deltaY > 0 ? 1 : -1);
-        }
-      }}
-      onPointerDown={(e) => {
-        (e.target as HTMLElement).setPointerCapture(e.pointerId);
-        dragRef.current = { x: e.clientX, y: e.clientY, active: true };
-      }}
-      onPointerMove={(e) => {
-        const drag = dragRef.current;
-        if (!drag?.active) return;
-        const dx = e.clientX - drag.x;
-        const dy = e.clientY - drag.y;
-        if (tool === 'wl') {
-          onWlDelta(dx * 0.5, -dy * 1.5);
-          drag.x = e.clientX;
-          drag.y = e.clientY;
-        } else if (tool === 'zoom') {
-          onZoomChange(Math.min(8, Math.max(0.2, zoom * (1 - dy * 0.01))));
-          drag.y = e.clientY;
-        } else {
-          const steps = Math.trunc(dy / 8);
-          if (steps !== 0) {
-            onScroll(steps);
-            drag.y = e.clientY;
-          }
-        }
-      }}
-      onPointerUp={() => {
-        if (dragRef.current) dragRef.current.active = false;
-      }}
-      onContextMenu={(e) => e.preventDefault()}
-    >
-      <canvas ref={canvasRef} />
-      <div className="viewport__overlay">
-        <div className="viewport__top">
-          <span>{obliqueLabel}</span>
-          <span>
-            {slice.width}×{slice.height}
-          </span>
+    <div className={`mpr-root${layoutMode === 'single' ? ' mpr-root--single' : ''}`}>
+      <div className="mpr__toolbar">
+        <div className="mpr__layout-toggle" role="group" aria-label={t('mpr.layout')}>
+          <button
+            type="button"
+            className={`btn btn--ghost btn--sm${layoutMode === 'single' ? ' btn--active' : ''}`}
+            onClick={() => onLayoutModeChange('single')}
+            title={t('mpr.layoutSingleTip')}
+          >
+            {t('mpr.layoutSingle')}
+          </button>
+          <button
+            type="button"
+            className={`btn btn--ghost btn--sm${layoutMode === 'quad' ? ' btn--active' : ''}`}
+            onClick={() => onLayoutModeChange('quad')}
+            title={t('mpr.layoutQuadTip')}
+          >
+            {t('mpr.layoutQuad')}
+          </button>
         </div>
-        <div className="viewport__bottom">
-          <span>
-            {slice.spacing[0].toFixed(2)}×{slice.spacing[1].toFixed(2)} mm
-          </span>
-          <span>{useWebGl ? webglLabel : canvasLabel}</span>
+
+        <div className="mpr__layout-toggle" role="group" aria-label={t('mpr.basis')}>
+          <button
+            type="button"
+            className={`btn btn--ghost btn--sm${basis === 'patient' ? ' btn--active' : ''}`}
+            onClick={() => onMprBasisChange('patient')}
+            disabled={!canPatient}
+            title={
+              canPatient ? t('mpr.basisPatientTip') : t('mpr.basisPatientUnavailable')
+            }
+          >
+            {t('mpr.basisPatient')}
+          </button>
+          <button
+            type="button"
+            className={`btn btn--ghost btn--sm${basis === 'stack' ? ' btn--active' : ''}`}
+            onClick={() => onMprBasisChange('stack')}
+            title={t('mpr.basisStackTip')}
+          >
+            {t('mpr.basisStack')}
+          </button>
         </div>
+
+        {layoutMode === 'single' && (
+          <div className="mpr__plane-toggle" role="group" aria-label={t('mpr.plane')}>
+            {PLANES.map(({ plane, titleKey }) => (
+              <button
+                key={plane}
+                type="button"
+                className={`btn btn--ghost btn--sm${singlePlane === plane ? ' btn--active' : ''}`}
+                onClick={() => onSinglePlaneChange(plane)}
+                title={t(titleKey)}
+              >
+                {t(titleKey)}
+              </button>
+            ))}
+          </div>
+        )}
+
+        <p className="mpr__status">
+          {t('mpr.cursor', {
+            x: cursor.x.toFixed(1),
+            y: cursor.y.toFixed(1),
+            z: cursor.z.toFixed(1),
+            hu: hu.toFixed(1),
+          })}
+        </p>
       </div>
+
+      {layoutMode === 'single' ? (
+        <div className="mpr mpr--single">
+          {renderViewport(
+            singlePlane,
+            PLANES.find((p) => p.plane === singlePlane)?.titleKey ?? 'mpr.axial',
+          )}
+        </div>
+      ) : (
+        <div className="mpr">
+          {PLANES.map(({ plane, titleKey }) => (
+            <div key={plane} className={`mpr__cell mpr__cell--${plane}`}>
+              {renderViewport(plane, titleKey)}
+            </div>
+          ))}
+          <div className="mpr__cell mpr__cell--oblique">
+            {obliqueSlice && (
+              <ObliqueViewport
+                slice={obliqueSlice}
+                wl={wl}
+                zoom={zoom}
+                useWebGl={useWebGl}
+                onWebGlFailed={onWebGlFailed}
+                onWlDelta={onWlDelta}
+                onZoomChange={onZoomChange}
+                onScroll={(d) => {
+                  const next = offsetOrigin(oblique, d);
+                  onCursorChange({
+                    x: next.origin[0],
+                    y: next.origin[1],
+                    z: next.origin[2],
+                  });
+                }}
+                tool={tool}
+                obliqueLabel={t('mpr.oblique')}
+                canvasLabel={t('mpr.canvas')}
+                webglLabel={t('viewport.webgl')}
+              />
+            )}
+            <div className="mpr__oblique-controls">
+              <label title={t('mpr.yaw')}>
+                {t('mpr.yaw')}
+                <input
+                  type="range"
+                  min={-180}
+                  max={180}
+                  value={yaw}
+                  onChange={(e) => onYawChange(Number(e.target.value))}
+                />
+                <span>{yaw}°</span>
+              </label>
+              <label title={t('mpr.pitch')}>
+                {t('mpr.pitch')}
+                <input
+                  type="range"
+                  min={-90}
+                  max={90}
+                  value={pitch}
+                  onChange={(e) => onPitchChange(Number(e.target.value))}
+                />
+                <span>{pitch}°</span>
+              </label>
+              <p>
+                {t('mpr.volume', {
+                  dims: volume.dims.join('×'),
+                  spacing: volume.spacing.map((s) => s.toFixed(2)).join('×'),
+                })}
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

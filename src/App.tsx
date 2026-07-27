@@ -3,6 +3,8 @@ import type {
   Annotation,
   DicomSeries,
   DicomStudy,
+  MprBasis,
+  MprPlane,
   ViewerTool,
   VolumeData,
   WindowLevel,
@@ -20,9 +22,10 @@ import { DEFAULT_SYNC_FLAGS, mapSliceIndex } from './viewer/seriesSync';
 import { parseAnnotationsFile, serializeAnnotations } from './viewer/annotationsIo';
 import { SeriesList } from './components/SeriesList';
 import { Toolbar } from './components/Toolbar';
+import { ViewerToolRail } from './components/ViewerToolRail';
 import { Viewport } from './components/Viewport';
 import { DocumentPane } from './components/DocumentPane';
-import { MprLayout } from './components/MprLayout';
+import { MprLayout, type MprLayoutMode } from './components/MprLayout';
 import { CompareLayout } from './components/CompareLayout';
 import { PasswordDialog } from './components/PasswordDialog';
 import { MediaDialog } from './components/MediaDialog';
@@ -76,7 +79,7 @@ export default function App() {
   const { t } = useLocale();
   const { reportError } = useErrorLog();
   const { reportUpdate } = useUpdateLog();
-  const [appVersion, setAppVersion] = useState('1.0.3');
+  const [appVersion, setAppVersion] = useState('1.0.4');
   const [updateResult, setUpdateResult] = useState<Extract<
     UpdateCheckResult,
     { status: 'available' }
@@ -110,7 +113,10 @@ export default function App() {
   const [cursor, setCursor] = useState<VolumeCursor>({ x: 0, y: 0, z: 0 });
   const [yaw, setYaw] = useState(30);
   const [pitch, setPitch] = useState(20);
-  const [useWebGl, setUseWebGl] = useState(true);
+  const [mprLayoutMode, setMprLayoutMode] = useState<MprLayoutMode>('single');
+  const [mprSinglePlane, setMprSinglePlane] = useState<MprPlane>('axial');
+  const [mprBasis, setMprBasis] = useState<MprBasis>('patient');
+  const [useWebGl, setUseWebGl] = useState(false);
   const [invertUser, setInvertUser] = useState(false);
   const [flipH, setFlipH] = useState(false);
   const [flipV, setFlipV] = useState(false);
@@ -262,6 +268,11 @@ export default function App() {
     loadAbortRef.current?.abort();
     mprAbortRef.current?.abort();
   }, []);
+
+  const handleWebGlFailed = useCallback(() => {
+    setUseWebGl(false);
+    reportError('WebGL unavailable — using Canvas renderer', 'render');
+  }, [reportError]);
 
   const tryOpenDicomdir = useCallback(
     async (rootPath: string): Promise<boolean> => {
@@ -515,7 +526,11 @@ export default function App() {
 
   /** Lazy-decode active (+ compare) slice and prefetch neighbors. */
   useEffect(() => {
-    if (!hasApi || !activeSeries || activeDocument) return;
+    // MPR owns the volume buffers — do not decode/prefetch stack slices in parallel
+    // (that OOM-crashes the renderer and reloads to the empty screen).
+    if (!hasApi || !activeSeries || activeDocument || viewMode === 'mpr' || mprBuilding) {
+      return;
+    }
     const series = activeSeries;
     const idx = sliceIndex;
     const inst = series.instances[idx];
@@ -549,6 +564,8 @@ export default function App() {
     hasApi,
     activeSeries,
     activeDocument,
+    viewMode,
+    mprBuilding,
     sliceIndex,
     readFile,
     bumpPixels,
@@ -612,6 +629,8 @@ export default function App() {
         },
       );
       if (controller.signal.aborted) return;
+      // Volume owns pixel data now — free per-instance decode cache to avoid OOM while scrolling.
+      sharedPixelCache.clear();
       setVolume(vol);
       setCursor(
         cursorFromIndices({
@@ -644,11 +663,14 @@ export default function App() {
       mprAbortRef.current?.abort();
       setMprBuilding(false);
       setMprProgress(null);
+      if (viewMode === 'mpr') {
+        setSliceIndex(Math.round(cursor.z));
+      }
       setVolume(null);
       setViewMode(m);
-      if (m === 'compare' && tool === 'crosshair') setTool('scroll');
+      if (tool === 'crosshair') setTool('scroll');
     },
-    [enterMpr, tool],
+    [enterMpr, tool, viewMode, cursor.z],
   );
 
   useEffect(() => {
@@ -1279,12 +1301,6 @@ export default function App() {
     viewMode,
   ]);
 
-  useEffect(() => {
-    if (viewMode === 'mpr') {
-      setSliceIndex(Math.round(cursor.z));
-    }
-  }, [cursor.z, viewMode]);
-
   const onWlDelta = useCallback((dCenter: number, dWidth: number) => {
     setWl((prev) =>
       clampWindowLevel({
@@ -1395,44 +1411,10 @@ export default function App() {
           <span className="app__tag">{t('app.tag')}</span>
         </div>
         <Toolbar
-          tool={tool}
-          onToolChange={setTool}
           viewMode={viewMode}
           onViewModeChange={changeViewMode}
           mprAvailable={mprAvailable}
           compareAvailable={compareAvailable}
-          syncScroll={syncScroll}
-          onSyncScrollChange={(v) => {
-            setSyncScroll(v);
-            if (v && activeSeries && compareSeries) {
-              setCompareSliceIndex(
-                mapSliceIndex(
-                  sliceIndex,
-                  activeSeries.instances.length,
-                  compareSeries.instances.length,
-                ),
-              );
-            }
-          }}
-          syncWl={syncWl}
-          onSyncWlChange={(v) => {
-            setSyncWl(v);
-            if (v) setCompareWl(wl);
-          }}
-          syncZoom={syncZoom}
-          onSyncZoomChange={(v) => {
-            setSyncZoom(v);
-            if (v) {
-              setCompareZoom(zoom);
-              setComparePan(pan);
-            }
-          }}
-          wl={wl}
-          onWlChange={(next) => {
-            setWl(next);
-            if (syncWl) setCompareWl(next);
-          }}
-          onPreset={applyPreset}
           onOpenFolder={openFolder}
           onOpenFiles={() => void openFiles()}
           onOpenZip={openZip}
@@ -1444,26 +1426,6 @@ export default function App() {
           onExportPng={() => void exportPng()}
           onExportDicomAnon={() => void exportDicomAnon()}
           onExportSeriesAnon={() => void exportSeriesAnon()}
-          zoom={zoom}
-          onZoomReset={resetView}
-          useWebGl={useWebGl}
-          onUseWebGlChange={setUseWebGl}
-          invert={invertUser}
-          onInvertChange={setInvertUser}
-          flipH={flipH}
-          onFlipHChange={setFlipH}
-          flipV={flipV}
-          onFlipVChange={setFlipV}
-          onToggleTags={() => setTagsOpen((v) => !v)}
-          tagsOpen={tagsOpen}
-          onClearMeasures={clearAllMeasures}
-          canSaveAnnotations={hasApi && !!activeSeries && !activeDocument}
-          onSaveAnnotations={() => void saveAnnotations()}
-          onLoadAnnotations={() => void loadAnnotations()}
-          cinePlaying={cinePlaying}
-          onCineToggle={toggleCine}
-          cineFps={cineFps}
-          onCineFpsChange={setCineFps}
           canCancelLoad={loading || mprBuilding}
           onCancelLoad={cancelLoad}
           onCheckUpdates={() => void runUpdateCheck()}
@@ -1547,7 +1509,68 @@ export default function App() {
           <UpdateLogPanel />
         </aside>
 
-        <main className="app__main">
+        <div className="app__viewer">
+          {activeSeries && (
+            <ViewerToolRail
+              tool={tool}
+              onToolChange={setTool}
+              viewMode={viewMode}
+              syncScroll={syncScroll}
+              onSyncScrollChange={(v) => {
+                setSyncScroll(v);
+                if (v && activeSeries && compareSeries) {
+                  setCompareSliceIndex(
+                    mapSliceIndex(
+                      sliceIndex,
+                      activeSeries.instances.length,
+                      compareSeries.instances.length,
+                    ),
+                  );
+                }
+              }}
+              syncWl={syncWl}
+              onSyncWlChange={(v) => {
+                setSyncWl(v);
+                if (v) setCompareWl(wl);
+              }}
+              syncZoom={syncZoom}
+              onSyncZoomChange={(v) => {
+                setSyncZoom(v);
+                if (v) {
+                  setCompareZoom(zoom);
+                  setComparePan(pan);
+                }
+              }}
+              wl={wl}
+              onWlChange={(next) => {
+                setWl(next);
+                if (syncWl) setCompareWl(next);
+              }}
+              onPreset={applyPreset}
+              onToggleTags={() => setTagsOpen((v) => !v)}
+              tagsOpen={tagsOpen}
+              invert={invertUser}
+              onInvertChange={setInvertUser}
+              flipH={flipH}
+              onFlipHChange={setFlipH}
+              flipV={flipV}
+              onFlipVChange={setFlipV}
+              zoom={zoom}
+              onZoomReset={resetView}
+              useWebGl={useWebGl}
+              onUseWebGlChange={setUseWebGl}
+              onClearMeasures={clearAllMeasures}
+              canSaveAnnotations={hasApi && !!activeSeries && !activeDocument}
+              onSaveAnnotations={() => void saveAnnotations()}
+              onLoadAnnotations={() => void loadAnnotations()}
+              cinePlaying={cinePlaying}
+              onCineToggle={toggleCine}
+              cineFps={cineFps}
+              onCineFpsChange={setCineFps}
+            />
+          )}
+
+          <main className="app__main">
           {!activeSeries ? (
             <div className="empty">
               <h1>Slice</h1>
@@ -1625,10 +1648,17 @@ export default function App() {
               zoom={zoom}
               onZoomChange={setZoom}
               useWebGl={useWebGl}
+              onWebGlFailed={handleWebGlFailed}
               yaw={yaw}
               pitch={pitch}
               onYawChange={setYaw}
               onPitchChange={setPitch}
+              layoutMode={mprLayoutMode}
+              onLayoutModeChange={setMprLayoutMode}
+              singlePlane={mprSinglePlane}
+              onSinglePlaneChange={setMprSinglePlane}
+              mprBasis={mprBasis}
+              onMprBasisChange={setMprBasis}
             />
           ) : viewMode === 'compare' && compareSeries ? (
             <CompareLayout
@@ -1671,6 +1701,7 @@ export default function App() {
               invert={displayInvert}
               flipH={flipH}
               flipV={flipV}
+              onWebGlFailed={handleWebGlFailed}
             />
           ) : (
             <Viewport
@@ -1693,6 +1724,7 @@ export default function App() {
               invert={displayInvert}
               flipH={flipH}
               flipV={flipV}
+              onWebGlFailed={handleWebGlFailed}
             />
           )}
           <TagBrowser
@@ -1701,6 +1733,7 @@ export default function App() {
             onClose={() => setTagsOpen(false)}
           />
         </main>
+        </div>
       </div>
     </div>
   );
