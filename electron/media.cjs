@@ -108,33 +108,56 @@ async function listWindowsOptical() {
       'powershell.exe',
       [
         '-NoProfile',
+        '-NonInteractive',
         '-Command',
-        "Get-CimInstance Win32_LogicalDisk | Where-Object { $_.DriveType -eq 5 -or $_.DriveType -eq 2 } | Select-Object DeviceID, VolumeName, DriveType | ConvertTo-Json -Compress",
+        // Prefer DriveType filter in WMI query (faster than Where-Object piping).
+        "Get-CimInstance -ClassName Win32_LogicalDisk -Filter \"DriveType=2 OR DriveType=5\" -ErrorAction SilentlyContinue | Select-Object DeviceID, VolumeName, DriveType | ConvertTo-Json -Compress",
       ],
-      { timeout: 12000, windowsHide: true },
+      { timeout: 4000, windowsHide: true, killSignal: 'SIGKILL' },
     );
-    const parsed = JSON.parse(stdout || '[]');
-    const rows = Array.isArray(parsed) ? parsed : parsed ? [parsed] : [];
-    const out = [];
-    for (const row of rows) {
-      const letter = String(row.DeviceID || '').replace(/\\$/, '');
-      if (!letter) continue;
-      const mountPath = letter.endsWith(':') ? `${letter}\\` : letter;
-      const dicom = await hasDicomContent(mountPath);
-      const kind = Number(row.DriveType) === 5 ? 'optical' : 'removable';
-      out.push({
-        id: mountPath,
-        name: row.VolumeName || letter,
-        path: mountPath,
-        kind,
-        hasDicom: dicom,
-        platform: 'win32',
-      });
-    }
-    return out;
+    return parseWindowsLogicalDiskJson(stdout);
   } catch {
     return [];
   }
+}
+
+/**
+ * @param {string} stdout
+ * @returns {Promise<Array<{ id: string, name: string, path: string, kind: string, hasDicom: boolean, platform: string }>>}
+ */
+async function parseWindowsLogicalDiskJson(stdout) {
+  let parsed;
+  try {
+    parsed = JSON.parse(stdout || '[]');
+  } catch {
+    return [];
+  }
+  const rows = Array.isArray(parsed) ? parsed : parsed ? [parsed] : [];
+  const out = [];
+  for (const row of rows) {
+    const letter = String(row.DeviceID || '').replace(/\\$/, '');
+    if (!letter) continue;
+    const mountPath = letter.endsWith(':') ? `${letter}\\` : letter;
+    let dicom = false;
+    try {
+      dicom = await Promise.race([
+        hasDicomContent(mountPath),
+        new Promise((resolve) => setTimeout(() => resolve(false), 1500)),
+      ]);
+    } catch {
+      dicom = false;
+    }
+    const kind = Number(row.DriveType) === 5 ? 'optical' : 'removable';
+    out.push({
+      id: mountPath,
+      name: row.VolumeName || letter,
+      path: mountPath,
+      kind,
+      hasDicom: dicom,
+      platform: 'win32',
+    });
+  }
+  return out;
 }
 
 async function listLinuxMedia() {
@@ -200,16 +223,28 @@ async function listLinuxMedia() {
 
 /**
  * List CD/DVD and DICOM-bearing removable volumes.
+ * Hard wall-clock budget so CI / hung WMI never blocks forever.
  * @returns {Promise<Array<{ id: string, name: string, path: string, kind: string, hasDicom: boolean, platform: string }>>}
  */
 async function listMediaSources() {
-  if (process.platform === 'darwin') return listMacVolumes();
-  if (process.platform === 'win32') return listWindowsOptical();
-  return listLinuxMedia();
+  const run = async () => {
+    if (process.platform === 'darwin') return listMacVolumes();
+    if (process.platform === 'win32') return listWindowsOptical();
+    return listLinuxMedia();
+  };
+  try {
+    return await Promise.race([
+      run(),
+      new Promise((resolve) => setTimeout(() => resolve([]), 6000)),
+    ]);
+  } catch {
+    return [];
+  }
 }
 
 module.exports = {
   listMediaSources,
   hasDicomContent,
   classifyFromDiskutil,
+  parseWindowsLogicalDiskJson,
 };

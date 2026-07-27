@@ -322,6 +322,79 @@ async function resolveDroppedPaths(paths) {
   return { needsPassword: false, files: [...new Set(files)] };
 }
 
+ipcMain.handle('dialog:openStudy', async () => {
+  const isMac = process.platform === 'darwin';
+  // macOS: files + folders together. Elsewhere: folder picker (typical DICOM /
+  // CD mount). ZIP/files still work via drag-drop or openStudyFiles.
+  const result = await dialog.showOpenDialog({
+    title: 'Load study',
+    properties: isMac
+      ? ['openFile', 'openDirectory', 'multiSelections']
+      : ['openDirectory'],
+    filters: isMac
+      ? [
+          { name: 'DICOM / ZIP', extensions: ['dcm', 'dicom', 'zip'] },
+          { name: 'ZIP archives', extensions: ['zip'] },
+          { name: 'All files', extensions: ['*'] },
+        ]
+      : undefined,
+  });
+  if (result.canceled || result.filePaths.length === 0) return [];
+
+  const paths = [];
+  for (const p of result.filePaths) {
+    try {
+      const resolved = normalize(p);
+      if (isBroadFilesystemRoot(resolved)) continue;
+      const st = await fs.stat(resolved);
+      if (st.isDirectory()) {
+        allowRoot(resolved);
+      } else {
+        allowFile(resolved);
+        try {
+          allowRoot(path.dirname(resolved));
+        } catch {
+          // parent may be too broad
+        }
+      }
+      paths.push(resolved);
+    } catch {
+      // skip
+    }
+  }
+  return paths;
+});
+
+/** ZIP or individual DICOM files (Windows / Linux companion to folder-first openStudy). */
+ipcMain.handle('dialog:openStudyFiles', async () => {
+  const result = await dialog.showOpenDialog({
+    title: 'Load study files / ZIP',
+    properties: ['openFile', 'multiSelections'],
+    filters: [
+      { name: 'DICOM / ZIP', extensions: ['dcm', 'dicom', 'zip'] },
+      { name: 'ZIP archives', extensions: ['zip'] },
+      { name: 'All files', extensions: ['*'] },
+    ],
+  });
+  if (result.canceled || result.filePaths.length === 0) return [];
+  const paths = [];
+  for (const p of result.filePaths) {
+    try {
+      const resolved = normalize(p);
+      allowFile(resolved);
+      try {
+        allowRoot(path.dirname(resolved));
+      } catch {
+        // parent may be too broad
+      }
+      paths.push(resolved);
+    } catch {
+      // skip
+    }
+  }
+  return paths;
+});
+
 ipcMain.handle('dialog:openFolder', async () => {
   const result = await dialog.showOpenDialog({
     properties: ['openDirectory'],

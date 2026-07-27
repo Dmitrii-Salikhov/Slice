@@ -2,6 +2,8 @@ const { contextBridge, ipcRenderer, webUtils } = require('electron');
 
 contextBridge.exposeInMainWorld('slice', {
   openFolder: () => ipcRenderer.invoke('dialog:openFolder'),
+  openStudy: () => ipcRenderer.invoke('dialog:openStudy'),
+  openStudyFiles: () => ipcRenderer.invoke('dialog:openStudyFiles'),
   openZipDialog: () => ipcRenderer.invoke('dialog:openZip'),
   openFileDialog: (opts) => ipcRenderer.invoke('dialog:openFile', opts),
   openDicomFilesDialog: () => ipcRenderer.invoke('dialog:openDicomFiles'),

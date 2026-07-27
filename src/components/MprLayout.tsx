@@ -1,5 +1,12 @@
 import { useDeferredValue, useMemo } from 'react';
-import type { MprBasis, MprPlane, ViewerTool, VolumeData, WindowLevel } from '../dicom/types';
+import type {
+  Annotation,
+  MprBasis,
+  MprPlane,
+  ViewerTool,
+  VolumeData,
+  WindowLevel,
+} from '../dicom/types';
 import type { VolumeCursor, ObliquePlane } from '../viewer/crosshair';
 import {
   defaultOblique,
@@ -48,6 +55,12 @@ type Props = {
   onSinglePlaneChange: (plane: MprPlane) => void;
   mprBasis: MprBasis;
   onMprBasisChange: (basis: MprBasis) => void;
+  measures: Annotation[];
+  onMeasuresChange: (m: Annotation[]) => void;
+  selectedAnnotationId?: string | null;
+  onSelectAnnotation?: (id: string | null) => void;
+  onClearMeasures?: () => void;
+  onPlaneFocus?: (plane: MprPlane) => void;
 };
 
 const PLANES: { plane: MprPlane; titleKey: MessageKey }[] = [
@@ -90,6 +103,12 @@ export function MprLayout({
   onSinglePlaneChange,
   mprBasis,
   onMprBasisChange,
+  measures,
+  onMeasuresChange,
+  selectedAnnotationId = null,
+  onSelectAnnotation,
+  onClearMeasures,
+  onPlaneFocus,
 }: Props) {
   const { t } = useLocale();
   const deferredYaw = useDeferredValue(yaw);
@@ -160,6 +179,12 @@ export function MprLayout({
       onWlDelta={onWlDelta}
       onZoomChange={onZoomChange}
       mprBasis={basis}
+      measures={measures}
+      onMeasuresChange={onMeasuresChange}
+      selectedAnnotationId={selectedAnnotationId}
+      onSelectAnnotation={onSelectAnnotation}
+      onClearMeasures={onClearMeasures}
+      onFocus={() => onPlaneFocus?.(plane)}
     />
   );
 

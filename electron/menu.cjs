@@ -9,13 +9,23 @@ function buildAppMenu(send) {
   /** @type {Electron.MenuItemConstructorOptions[]} */
   const fileSubmenu = [
     {
-      label: 'Open Folder…',
+      label: 'Load Study…',
       accelerator: 'CmdOrCtrl+O',
+      click: () => send('open-study'),
+    },
+    {
+      label: 'New Study',
+      accelerator: 'CmdOrCtrl+N',
+      click: () => send('new-study'),
+    },
+    { type: 'separator' },
+    {
+      label: 'Open Folder…',
+      accelerator: 'CmdOrCtrl+Shift+O',
       click: () => send('open-folder'),
     },
     {
       label: 'Open DICOM Files…',
-      accelerator: 'CmdOrCtrl+Shift+O',
       click: () => send('open-files'),
     },
     {

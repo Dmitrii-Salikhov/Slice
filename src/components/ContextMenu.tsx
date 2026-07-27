@@ -23,9 +23,17 @@ export function ContextMenu({ x, y, items, onSelect, onClose }: Props) {
       className="ctx-menu-backdrop"
       role="presentation"
       onPointerDown={(e) => {
+        // Dismiss on any button; stop so viewport under the menu does not
+        // start pan/WL/draw from the same gesture (click fall-through).
+        e.preventDefault();
+        e.stopPropagation();
         if (e.target === e.currentTarget) onClose();
       }}
-      onContextMenu={(e) => e.preventDefault()}
+      onContextMenu={(e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        onClose();
+      }}
     >
       <ul
         className="ctx-menu"
@@ -45,7 +53,10 @@ export function ContextMenu({ x, y, items, onSelect, onClose }: Props) {
                 role="menuitem"
                 className={`ctx-menu__item${item.danger ? ' ctx-menu__item--danger' : ''}`}
                 disabled={item.disabled}
-                onClick={() => {
+                onPointerDown={(e) => {
+                  if (e.button !== 0 || item.disabled) return;
+                  e.preventDefault();
+                  e.stopPropagation();
                   onSelect(item.id);
                   onClose();
                 }}

@@ -98,6 +98,10 @@ export type PacsRetrieveProgress = {
 
 export type SliceApi = {
   openFolder: () => Promise<string | null>;
+  /** Smart load: folder (Win/Linux) or files+folders (macOS). Returns selected paths. */
+  openStudy: () => Promise<string[]>;
+  /** ZIP / individual DICOM files. */
+  openStudyFiles: () => Promise<string[]>;
   openZipDialog: () => Promise<string | null>;
   openFileDialog: (opts?: OpenFileDialogOptions) => Promise<string | null>;
   /** Multi-select DICOM files from Explorer-style dialog. */

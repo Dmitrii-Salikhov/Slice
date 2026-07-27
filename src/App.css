@@ -101,6 +101,8 @@
   grid-template-columns: 260px 1fr;
   flex: 1;
   min-height: 0;
+  height: 100%;
+  align-items: stretch;
 }
 
 .app__viewer {
@@ -108,12 +110,19 @@
   grid-template-columns: auto 1fr;
   min-width: 0;
   min-height: 0;
+  height: 100%;
 }
 
 .app__main {
+  /* Always the image pane (2nd track), even when the tool rail is hidden. */
+  grid-column: 2;
   min-width: 0;
   min-height: 0;
+  height: 100%;
   position: relative;
+  display: flex;
+  flex-direction: column;
+  background: #000;
 }
 
 .app__sidebar {
@@ -153,7 +162,8 @@
 }
 
 .empty {
-  height: 100%;
+  position: absolute;
+  inset: 0;
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -161,6 +171,7 @@
   gap: 12px;
   text-align: center;
   padding: 32px;
+  box-sizing: border-box;
 }
 
 .empty h1 {

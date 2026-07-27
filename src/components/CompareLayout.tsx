@@ -11,6 +11,8 @@ type Pane = {
   onSliceChange: (index: number) => void;
   measures: Annotation[];
   onMeasuresChange: (m: Annotation[]) => void;
+  selectedAnnotationId?: string | null;
+  onSelectAnnotation?: (id: string | null) => void;
   pixelsRevision?: number;
   onContextAction?: (action: string) => void;
 };
@@ -81,6 +83,8 @@ export function CompareLayout({
           useWebGl={useWebGl}
           measures={left.measures}
           onMeasuresChange={left.onMeasuresChange}
+          selectedAnnotationId={left.selectedAnnotationId}
+          onSelectAnnotation={left.onSelectAnnotation}
           label={left.label}
           pixelsRevision={left.pixelsRevision}
           onContextAction={left.onContextAction}
@@ -107,6 +111,8 @@ export function CompareLayout({
           useWebGl={useWebGl}
           measures={right.measures}
           onMeasuresChange={right.onMeasuresChange}
+          selectedAnnotationId={right.selectedAnnotationId}
+          onSelectAnnotation={right.onSelectAnnotation}
           label={right.label}
           pixelsRevision={right.pixelsRevision}
           onContextAction={right.onContextAction}

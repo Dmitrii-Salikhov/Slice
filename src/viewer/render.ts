@@ -1,6 +1,7 @@
-import type { Annotation, WindowLevel } from '../dicom/types';
+import type { Annotation, MprPlane, WindowLevel } from '../dicom/types';
 import { applyWindowLevel } from './windowLevel';
 import { imageToCanvas, physicalSize } from './math';
+import { isAnnotationVisible } from './annotationTools';
 
 export type RenderParams = {
   pixels: Float32Array | Int16Array;
@@ -46,6 +47,10 @@ export type OverlayParams = {
   probe?: { x: number; y: number; value: number; label?: string } | null;
   spacing?: { col: number; row: number };
   sliceIndex?: number;
+  /** When set, only show annotations for this MPR plane. */
+  mprPlane?: MprPlane;
+  /** Highlight the annotation with this id (selection). */
+  selectedId?: string | null;
 };
 
 /**
@@ -183,18 +188,34 @@ export function drawOverlays(canvas: HTMLCanvasElement, overlay: OverlayParams):
       spacingRow,
     );
 
-  const drawSeg = (x0: number, y0: number, x1: number, y1: number, label?: string) => {
+  const drawSeg = (
+    x0: number,
+    y0: number,
+    x1: number,
+    y1: number,
+    label?: string,
+    selected = false,
+  ) => {
     const a = toCanvas(x0, y0);
     const b = toCanvas(x1, y1);
-    ctx.strokeStyle = 'rgba(255, 220, 80, 0.95)';
-    ctx.fillStyle = 'rgba(255, 220, 80, 0.95)';
+    if (selected) {
+      ctx.strokeStyle = 'rgba(255, 255, 255, 0.95)';
+      ctx.lineWidth = 4 * dpr;
+      ctx.beginPath();
+      ctx.moveTo(a.x, a.y);
+      ctx.lineTo(b.x, b.y);
+      ctx.stroke();
+      ctx.lineWidth = Math.max(1, dpr);
+    }
+    ctx.strokeStyle = selected ? 'rgba(255, 240, 120, 1)' : 'rgba(255, 220, 80, 0.95)';
+    ctx.fillStyle = selected ? 'rgba(255, 240, 120, 1)' : 'rgba(255, 220, 80, 0.95)';
     ctx.beginPath();
     ctx.moveTo(a.x, a.y);
     ctx.lineTo(b.x, b.y);
     ctx.stroke();
     for (const p of [a, b]) {
       ctx.beginPath();
-      ctx.arc(p.x, p.y, 3 * dpr, 0, Math.PI * 2);
+      ctx.arc(p.x, p.y, (selected ? 4.5 : 3) * dpr, 0, Math.PI * 2);
       ctx.fill();
     }
     if (label) {
@@ -203,11 +224,27 @@ export function drawOverlays(canvas: HTMLCanvasElement, overlay: OverlayParams):
     }
   };
 
-  const drawArrow = (x0: number, y0: number, x1: number, y1: number, label?: string) => {
+  const drawArrow = (
+    x0: number,
+    y0: number,
+    x1: number,
+    y1: number,
+    label?: string,
+    selected = false,
+  ) => {
     const a = toCanvas(x0, y0);
     const b = toCanvas(x1, y1);
-    ctx.strokeStyle = 'rgba(120, 200, 255, 0.95)';
-    ctx.fillStyle = 'rgba(120, 200, 255, 0.95)';
+    if (selected) {
+      ctx.strokeStyle = 'rgba(255, 255, 255, 0.95)';
+      ctx.lineWidth = 4 * dpr;
+      ctx.beginPath();
+      ctx.moveTo(a.x, a.y);
+      ctx.lineTo(b.x, b.y);
+      ctx.stroke();
+      ctx.lineWidth = Math.max(1, dpr);
+    }
+    ctx.strokeStyle = selected ? 'rgba(160, 230, 255, 1)' : 'rgba(120, 200, 255, 0.95)';
+    ctx.fillStyle = selected ? 'rgba(160, 230, 255, 1)' : 'rgba(120, 200, 255, 0.95)';
     ctx.beginPath();
     ctx.moveTo(a.x, a.y);
     ctx.lineTo(b.x, b.y);
@@ -233,6 +270,7 @@ export function drawOverlays(canvas: HTMLCanvasElement, overlay: OverlayParams):
     y1: number,
     label?: string,
     shape: 'rect' | 'ellipse' = 'ellipse',
+    selected = false,
   ) => {
     const a = toCanvas(x0, y0);
     const b = toCanvas(x1, y1);
@@ -240,19 +278,29 @@ export function drawOverlays(canvas: HTMLCanvasElement, overlay: OverlayParams):
     const top = Math.min(a.y, b.y);
     const w = Math.abs(b.x - a.x);
     const h = Math.abs(b.y - a.y);
-    ctx.strokeStyle = 'rgba(80, 255, 180, 0.95)';
-    ctx.fillStyle = 'rgba(80, 255, 180, 0.12)';
-    if (shape === 'ellipse') {
-      ctx.beginPath();
-      ctx.ellipse(left + w / 2, top + h / 2, w / 2, h / 2, 0, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.stroke();
-    } else {
-      ctx.fillRect(left, top, w, h);
-      ctx.strokeRect(left, top, w, h);
+    const stroke = () => {
+      if (shape === 'ellipse') {
+        ctx.beginPath();
+        ctx.ellipse(left + w / 2, top + h / 2, w / 2, h / 2, 0, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.stroke();
+      } else {
+        ctx.fillRect(left, top, w, h);
+        ctx.strokeRect(left, top, w, h);
+      }
+    };
+    if (selected) {
+      ctx.strokeStyle = 'rgba(255, 255, 255, 0.95)';
+      ctx.fillStyle = 'rgba(255, 255, 255, 0.06)';
+      ctx.lineWidth = 4 * dpr;
+      stroke();
+      ctx.lineWidth = Math.max(1, dpr);
     }
+    ctx.strokeStyle = selected ? 'rgba(120, 255, 200, 1)' : 'rgba(80, 255, 180, 0.95)';
+    ctx.fillStyle = selected ? 'rgba(80, 255, 180, 0.22)' : 'rgba(80, 255, 180, 0.12)';
+    stroke();
     if (label) {
-      ctx.fillStyle = 'rgba(80, 255, 180, 0.95)';
+      ctx.fillStyle = selected ? 'rgba(120, 255, 200, 1)' : 'rgba(80, 255, 180, 0.95)';
       ctx.font = `${11 * dpr}px Consolas, monospace`;
       ctx.fillText(label, left + 4 * dpr, top - 4 * dpr);
     }
@@ -266,20 +314,22 @@ export function drawOverlays(canvas: HTMLCanvasElement, overlay: OverlayParams):
     x2: number,
     y2: number,
     label?: string,
+    selected = false,
   ) => {
-    drawSeg(x0, y0, x1, y1);
-    drawSeg(x1, y1, x2, y2, label);
+    drawSeg(x0, y0, x1, y1, undefined, selected);
+    drawSeg(x1, y1, x2, y2, label, selected);
   };
 
-  const visible = (overlay.measures ?? []).filter(
-    (m) => overlay.sliceIndex == null || m.sliceIndex === overlay.sliceIndex,
+  const visible = (overlay.measures ?? []).filter((m) =>
+    isAnnotationVisible(m, { sliceIndex: overlay.sliceIndex, mprPlane: overlay.mprPlane }),
   );
 
   for (const m of visible) {
+    const selected = overlay.selectedId != null && m.id === overlay.selectedId;
     if (m.kind === 'length') {
-      drawSeg(m.x0, m.y0, m.x1, m.y1, `${m.mm.toFixed(1)} mm`);
+      drawSeg(m.x0, m.y0, m.x1, m.y1, `${m.mm.toFixed(1)} mm`, selected);
     } else if (m.kind === 'angle') {
-      drawAngle(m.x0, m.y0, m.x1, m.y1, m.x2, m.y2, `${m.deg.toFixed(1)}°`);
+      drawAngle(m.x0, m.y0, m.x1, m.y1, m.x2, m.y2, `${m.deg.toFixed(1)}°`, selected);
     } else if (m.kind === 'roi') {
       const shape = m.shape ?? 'ellipse';
       const range =
@@ -293,9 +343,10 @@ export function drawOverlays(canvas: HTMLCanvasElement, overlay: OverlayParams):
         m.y1,
         `μ ${m.mean.toFixed(1)} ± ${m.sd.toFixed(1)}${range} · ${m.areaMm2.toFixed(0)} mm²`,
         shape,
+        selected,
       );
     } else if (m.kind === 'arrow') {
-      drawArrow(m.x0, m.y0, m.x1, m.y1, m.label);
+      drawArrow(m.x0, m.y0, m.x1, m.y1, m.label, selected);
     }
   }
 

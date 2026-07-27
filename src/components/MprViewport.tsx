@@ -1,12 +1,29 @@
-import { useEffect, useRef } from 'react';
-import type { MprBasis, MprPlane, ViewerTool, VolumeData, WindowLevel } from '../dicom/types';
+import { useEffect, useRef, useState } from 'react';
+import type {
+  Annotation,
+  MprBasis,
+  MprPlane,
+  ViewerTool,
+  VolumeData,
+  WindowLevel,
+} from '../dicom/types';
 import type { VolumeCursor } from '../viewer/crosshair';
 import { clampCursor } from '../viewer/crosshair';
-import { clientToImage } from '../viewer/math';
-import { drawOverlays, renderSliceToCanvas } from '../viewer/render';
+import { angleDeg, clientToImage } from '../viewer/math';
+import {
+  annotationHitSlop,
+  finishEllipseRoi,
+  finishLength,
+  isMeasureTool,
+  isNavTool,
+  pickAnnotation,
+} from '../viewer/annotationTools';
+import { drawOverlays, renderSliceToCanvas, type DraftOverlay } from '../viewer/render';
 import type { MprSlice } from '../viewer/mpr';
 import { crosshairInMprPlane, cursorFromMprPlaneClick } from '../viewer/mpr';
 import { createWebGlSliceRenderer, type WebGlSliceRenderer } from '../viewer/webgl';
+import { ContextMenu, type ContextMenuItem } from './ContextMenu';
+import { useLocale } from '../i18n/LocaleContext';
 import './Viewport.css';
 
 type Props = {
@@ -26,6 +43,20 @@ type Props = {
   onZoomChange: (z: number) => void;
   onWebGlFailed?: () => void;
   mprBasis: MprBasis;
+  measures: Annotation[];
+  onMeasuresChange: (m: Annotation[]) => void;
+  selectedAnnotationId?: string | null;
+  onSelectAnnotation?: (id: string | null) => void;
+  onClearMeasures?: () => void;
+  onFocus?: () => void;
+};
+
+type DragState = {
+  x: number;
+  y: number;
+  active: boolean;
+  cross?: boolean;
+  mode?: 'nav' | 'length' | 'roi' | 'arrow';
 };
 
 export function MprViewport({
@@ -45,16 +76,38 @@ export function MprViewport({
   onZoomChange,
   onWebGlFailed,
   mprBasis,
+  measures,
+  onMeasuresChange,
+  selectedAnnotationId = null,
+  onSelectAnnotation,
+  onClearMeasures,
+  onFocus,
 }: Props) {
+  const { t } = useLocale();
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const overlayRef = useRef<HTMLCanvasElement>(null);
   const wrapRef = useRef<HTMLDivElement>(null);
   const glRef = useRef<WebGlSliceRenderer | null>(null);
-  const dragRef = useRef<{ x: number; y: number; active: boolean; cross?: boolean } | null>(null);
+  const dragRef = useRef<DragState | null>(null);
   const grayRef = useRef<Uint8ClampedArray | null>(null);
   const glFailedRef = useRef(false);
   const wheelRafRef = useRef<number | null>(null);
   const pendingSliceRef = useRef<number | null>(null);
+  const [draft, setDraft] = useState<DraftOverlay | null>(null);
+  const [anglePoints, setAnglePoints] = useState<Array<{ x: number; y: number }>>([]);
+  const [probe, setProbe] = useState<{
+    x: number;
+    y: number;
+    value: number;
+    label?: string;
+  } | null>(null);
+  const [ctxMenu, setCtxMenu] = useState<{
+    x: number;
+    y: number;
+    hitId: string | null;
+  } | null>(null);
+
+  const meta = { sliceIndex: slice.index, mprPlane: plane };
 
   const paint = () => {
     const canvas = canvasRef.current;
@@ -116,6 +169,12 @@ export function MprViewport({
         panY: 0,
         crosshair: ch,
         spacing: slice.spacing,
+        measures,
+        draftMeasure: draft,
+        probe,
+        sliceIndex: slice.index,
+        mprPlane: plane,
+        selectedId: selectedAnnotationId,
       });
     }
   };
@@ -137,7 +196,6 @@ export function MprViewport({
 
     const resize = () => {
       const rect = wrap.getBoundingClientRect();
-      // Cap DPR in MPR — full retina canvases + volume easily OOM the renderer.
       const dpr = Math.min(1.25, window.devicePixelRatio || 1);
       if (glRef.current) {
         glRef.current.resize(rect.width, rect.height, dpr);
@@ -171,14 +229,20 @@ export function MprViewport({
   useEffect(() => {
     paint();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [slice, wl, zoom, cursor, useWebGl, plane, volume, mprBasis]);
+  }, [slice, wl, zoom, cursor, useWebGl, plane, volume, mprBasis, measures, draft, probe, selectedAnnotationId]);
 
-  const setCursorFromEvent = (e: { clientX: number; clientY: number }) => {
+  useEffect(() => {
+    setAnglePoints([]);
+    setDraft(null);
+    setProbe(null);
+  }, [tool, slice.index, plane]);
+
+  const toImage = (clientX: number, clientY: number) => {
     const canvas = canvasRef.current;
-    if (!canvas) return;
-    const img = clientToImage(
-      e.clientX,
-      e.clientY,
+    if (!canvas) return null;
+    return clientToImage(
+      clientX,
+      clientY,
       canvas,
       slice.width,
       slice.height,
@@ -190,12 +254,17 @@ export function MprViewport({
       slice.spacing.col,
       slice.spacing.row,
     );
+  };
+
+  const setCursorFromEvent = (e: { clientX: number; clientY: number }) => {
+    const img = toImage(e.clientX, e.clientY);
     if (!img) return;
-    const next = clampCursor(
-      cursorFromMprPlaneClick(volume, plane, img.x, img.y, cursor, mprBasis, slice),
-      volume,
+    onCursorChange(
+      clampCursor(
+        cursorFromMprPlaneClick(volume, plane, img.x, img.y, cursor, mprBasis, slice),
+        volume,
+      ),
     );
-    onCursorChange(next);
   };
 
   const queueSliceChange = (index: number) => {
@@ -228,18 +297,154 @@ export function MprViewport({
   };
 
   const onPointerDown = (e: React.PointerEvent) => {
+    onFocus?.();
+    // Right/middle click: leave for context menu; do not capture or drag.
+    if (e.button !== 0) return;
+
     (e.target as HTMLElement).setPointerCapture(e.pointerId);
+
+    if (isNavTool(tool)) {
+      const img = toImage(e.clientX, e.clientY);
+      if (img) {
+        const hit = pickAnnotation(measures, img, annotationHitSlop(zoom), {
+          sliceIndex: slice.index,
+          mprPlane: plane,
+        });
+        onSelectAnnotation?.(hit?.id ?? null);
+        if (hit) return;
+      } else {
+        onSelectAnnotation?.(null);
+      }
+    }
+
+    if (tool === 'length' || tool === 'roi' || tool === 'arrow') {
+      const img = toImage(e.clientX, e.clientY);
+      if (!img) return;
+      setDraft({ kind: tool, x0: img.x, y0: img.y, x1: img.x, y1: img.y });
+      dragRef.current = { x: e.clientX, y: e.clientY, active: true, mode: tool };
+      return;
+    }
+
+    if (tool === 'angle') {
+      const img = toImage(e.clientX, e.clientY);
+      if (!img) return;
+      const next = [...anglePoints, img];
+      if (next.length === 1) {
+        setAnglePoints(next);
+        setDraft({ kind: 'angle', x0: img.x, y0: img.y, x1: img.x, y1: img.y });
+      } else if (next.length === 2) {
+        setAnglePoints(next);
+        setDraft({
+          kind: 'angle',
+          x0: next[0].x,
+          y0: next[0].y,
+          x1: next[1].x,
+          y1: next[1].y,
+        });
+      } else {
+        const done = (() => {
+          const deg = angleDeg(
+            next[0].x,
+            next[0].y,
+            next[1].x,
+            next[1].y,
+            next[2].x,
+            next[2].y,
+            slice.spacing.col,
+            slice.spacing.row,
+          );
+          if (deg <= 0.1) return null;
+          return {
+            kind: 'angle' as const,
+            id: `${Date.now()}`,
+            sliceIndex: meta.sliceIndex,
+            mprPlane: meta.mprPlane,
+            x0: next[0].x,
+            y0: next[0].y,
+            x1: next[1].x,
+            y1: next[1].y,
+            x2: next[2].x,
+            y2: next[2].y,
+            deg,
+          };
+        })();
+        if (done) onMeasuresChange([...measures, done]);
+        setAnglePoints([]);
+        setDraft(null);
+      }
+      return;
+    }
+
+    if (tool === 'probe') {
+      const img = toImage(e.clientX, e.clientY);
+      if (!img) return;
+      const x = Math.round(img.x);
+      const y = Math.round(img.y);
+      if (x < 0 || y < 0 || x >= slice.width || y >= slice.height) return;
+      const value = slice.pixels[y * slice.width + x];
+      setProbe({ x: img.x, y: img.y, value });
+      setCursorFromEvent(e);
+      return;
+    }
+
     if (tool === 'crosshair') {
       setCursorFromEvent(e);
       dragRef.current = { x: e.clientX, y: e.clientY, active: true, cross: true };
       return;
     }
-    dragRef.current = { x: e.clientX, y: e.clientY, active: true };
+
+    dragRef.current = { x: e.clientX, y: e.clientY, active: true, mode: 'nav' };
   };
 
   const onPointerMove = (e: React.PointerEvent) => {
     const drag = dragRef.current;
+
+    if (tool === 'angle' && anglePoints.length > 0) {
+      const img = toImage(e.clientX, e.clientY);
+      if (!img) return;
+      if (anglePoints.length === 1) {
+        setDraft({
+          kind: 'angle',
+          x0: anglePoints[0].x,
+          y0: anglePoints[0].y,
+          x1: img.x,
+          y1: img.y,
+        });
+      } else if (anglePoints.length === 2) {
+        setDraft({
+          kind: 'angle',
+          x0: anglePoints[0].x,
+          y0: anglePoints[0].y,
+          x1: anglePoints[1].x,
+          y1: anglePoints[1].y,
+          x2: img.x,
+          y2: img.y,
+        });
+      }
+      return;
+    }
+
+    if (tool === 'probe' && e.buttons === 1) {
+      const img = toImage(e.clientX, e.clientY);
+      if (!img) return;
+      const x = Math.round(img.x);
+      const y = Math.round(img.y);
+      if (x < 0 || y < 0 || x >= slice.width || y >= slice.height) return;
+      setProbe({ x: img.x, y: img.y, value: slice.pixels[y * slice.width + x] });
+      return;
+    }
+
     if (!drag?.active) return;
+
+    if (
+      (drag.mode === 'length' || drag.mode === 'roi' || drag.mode === 'arrow') &&
+      draft &&
+      draft.kind === drag.mode
+    ) {
+      const img = toImage(e.clientX, e.clientY);
+      if (img) setDraft({ ...draft, x1: img.x, y1: img.y });
+      return;
+    }
 
     if (drag.cross || tool === 'crosshair') {
       setCursorFromEvent(e);
@@ -256,7 +461,7 @@ export function MprViewport({
     } else if (tool === 'zoom') {
       onZoomChange(Math.min(8, Math.max(0.2, zoom * (1 - dy * 0.01))));
       drag.y = e.clientY;
-    } else {
+    } else if (!isMeasureTool(tool)) {
       const steps = Math.trunc(dy / 8);
       if (steps !== 0) {
         queueSliceChange(Math.min(max, Math.max(0, slice.index + steps)));
@@ -266,7 +471,76 @@ export function MprViewport({
   };
 
   const onPointerUp = () => {
+    const drag = dragRef.current;
+    if (
+      drag?.mode &&
+      (drag.mode === 'length' || drag.mode === 'roi' || drag.mode === 'arrow') &&
+      draft &&
+      draft.kind === drag.mode
+    ) {
+      if (drag.mode === 'length') {
+        const ann = finishLength(draft, slice.spacing.col, slice.spacing.row, meta);
+        if (ann) onMeasuresChange([...measures, ann]);
+      } else if (drag.mode === 'roi') {
+        const result = finishEllipseRoi(
+          draft,
+          slice.pixels,
+          slice.width,
+          slice.height,
+          slice.spacing.col,
+          slice.spacing.row,
+          meta,
+        );
+        if (result) onMeasuresChange([...measures, result.annotation]);
+      } else if (drag.mode === 'arrow') {
+        if (Math.hypot(draft.x1 - draft.x0, draft.y1 - draft.y0) > 2) {
+          onMeasuresChange([
+            ...measures,
+            {
+              kind: 'arrow',
+              id: `${Date.now()}`,
+              sliceIndex: meta.sliceIndex,
+              mprPlane: meta.mprPlane,
+              x0: draft.x0,
+              y0: draft.y0,
+              x1: draft.x1,
+              y1: draft.y1,
+            },
+          ]);
+        }
+      }
+      setDraft(null);
+    }
     if (dragRef.current) dragRef.current.active = false;
+  };
+
+  const visibility = { sliceIndex: slice.index, mprPlane: plane };
+
+  const ctxItems: ContextMenuItem[] = [
+    ...(ctxMenu?.hitId
+      ? [
+          {
+            id: 'delete-annotation',
+            label: t('ctx.deleteAnnotation'),
+            danger: true,
+          } satisfies ContextMenuItem,
+          { id: 'sep-del', separator: true } satisfies ContextMenuItem,
+        ]
+      : []),
+    { id: 'clear-measures', label: t('ctx.clearMeasures') },
+  ];
+
+  const onCtxSelect = (id: string) => {
+    if (id === 'delete-annotation' && ctxMenu?.hitId) {
+      const hitId = ctxMenu.hitId;
+      onMeasuresChange(measures.filter((m) => m.id !== hitId));
+      onSelectAnnotation?.(null);
+      return;
+    }
+    if (id === 'clear-measures') {
+      onClearMeasures?.();
+      onSelectAnnotation?.(null);
+    }
   };
 
   return (
@@ -277,7 +551,16 @@ export function MprViewport({
       onPointerDown={onPointerDown}
       onPointerMove={onPointerMove}
       onPointerUp={onPointerUp}
-      onContextMenu={(e) => e.preventDefault()}
+      onContextMenu={(e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        const img = toImage(e.clientX, e.clientY);
+        const hit = img
+          ? pickAnnotation(measures, img, annotationHitSlop(zoom), visibility)
+          : null;
+        if (hit) onSelectAnnotation?.(hit.id);
+        setCtxMenu({ x: e.clientX, y: e.clientY, hitId: hit?.id ?? null });
+      }}
     >
       <canvas ref={canvasRef} />
       {useWebGl && <canvas ref={overlayRef} className="viewport__overlay-canvas" />}
@@ -297,6 +580,15 @@ export function MprViewport({
           </span>
         </div>
       </div>
+      {ctxMenu && (
+        <ContextMenu
+          x={ctxMenu.x}
+          y={ctxMenu.y}
+          items={ctxItems}
+          onClose={() => setCtxMenu(null)}
+          onSelect={onCtxSelect}
+        />
+      )}
     </div>
   );
 }

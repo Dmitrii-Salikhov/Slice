@@ -1,6 +1,8 @@
 /** Shared app command ids (native menu + renderer hotkeys). */
 
 export type AppCommandId =
+  | 'open-study'
+  | 'new-study'
   | 'open-folder'
   | 'open-files'
   | 'open-zip'

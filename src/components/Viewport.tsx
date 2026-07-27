@@ -1,8 +1,14 @@
 import { useEffect, useRef, useState } from 'react';
 import type { Annotation, DicomInstance, ViewerTool, WindowLevel } from '../dicom/types';
 import { getModalityPixel, getPixelBuffer, hasPixels } from '../dicom/parse';
-import { angleDeg, clientToImage, lengthMm } from '../viewer/math';
-import { computeRoiStats } from '../viewer/roiStats';
+import { angleDeg, clientToImage } from '../viewer/math';
+import {
+  annotationHitSlop,
+  finishEllipseRoi,
+  finishLength,
+  isNavTool,
+  pickAnnotation,
+} from '../viewer/annotationTools';
 import {
   drawOverlays,
   renderSliceToCanvas,
@@ -28,6 +34,8 @@ type Props = {
   useWebGl: boolean;
   measures: Annotation[];
   onMeasuresChange: (m: Annotation[]) => void;
+  selectedAnnotationId?: string | null;
+  onSelectAnnotation?: (id: string | null) => void;
   label?: string;
   /** Bump when lazy pixels arrive (instance is mutated in place). */
   pixelsRevision?: number;
@@ -57,6 +65,8 @@ export function Viewport({
   useWebGl,
   measures,
   onMeasuresChange,
+  selectedAnnotationId = null,
+  onSelectAnnotation,
   label,
   pixelsRevision = 0,
   onContextAction,
@@ -89,7 +99,11 @@ export function Viewport({
     value: number;
     label?: string;
   } | null>(null);
-  const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number } | null>(null);
+  const [ctxMenu, setCtxMenu] = useState<{
+    x: number;
+    y: number;
+    hitId: string | null;
+  } | null>(null);
 
   const isColor = !!(instance?.colorRgba && instance.colorRgba.length > 0);
 
@@ -166,6 +180,7 @@ export function Viewport({
         probe,
         spacing: instance.pixelSpacing,
         sliceIndex,
+        selectedId: selectedAnnotationId,
       });
     }
   };
@@ -227,7 +242,7 @@ export function Viewport({
   useEffect(() => {
     paint();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [instance, wl, zoom, pan, measures, draft, probe, useWebGl, sliceIndex, pixelsRevision, ready, invert, flipH, flipV]);
+  }, [instance, wl, zoom, pan, measures, draft, probe, useWebGl, sliceIndex, pixelsRevision, ready, invert, flipH, flipV, selectedAnnotationId]);
 
   useEffect(() => {
     setAnglePoints([]);
@@ -298,7 +313,23 @@ export function Viewport({
 
   const onPointerDown = (e: React.PointerEvent) => {
     if (!instance || !canvasRef.current) return;
+    // Right/middle click: leave for context menu; do not capture or drag.
+    if (e.button !== 0) return;
+
     (e.target as HTMLElement).setPointerCapture(e.pointerId);
+
+    if (isNavTool(tool)) {
+      const img = toImage(e.clientX, e.clientY);
+      if (img) {
+        const hit = pickAnnotation(measures, img, annotationHitSlop(zoom), {
+          sliceIndex,
+        });
+        onSelectAnnotation?.(hit?.id ?? null);
+        if (hit) return;
+      } else {
+        onSelectAnnotation?.(null);
+      }
+    }
 
     if (tool === 'length' || tool === 'roi' || tool === 'arrow') {
       const img = toImage(e.clientX, e.clientY);
@@ -455,27 +486,13 @@ export function Viewport({
       instance
     ) {
       if (drag.mode === 'length') {
-        const mm = lengthMm(
-          draft.x1 - draft.x0,
-          draft.y1 - draft.y0,
+        const ann = finishLength(
+          draft,
           instance.pixelSpacing.col,
           instance.pixelSpacing.row,
+          { sliceIndex },
         );
-        if (mm > 0.1) {
-          onMeasuresChange([
-            ...measures,
-            {
-              kind: 'length',
-              id: `${Date.now()}`,
-              sliceIndex,
-              x0: draft.x0,
-              y0: draft.y0,
-              x1: draft.x1,
-              y1: draft.y1,
-              mm,
-            },
-          ]);
-        }
+        if (ann) onMeasuresChange([...measures, ann]);
       } else if (drag.mode === 'roi') {
         const pixels = getPixelBuffer(instance);
         if (!pixels) {
@@ -483,38 +500,16 @@ export function Viewport({
           if (dragRef.current) dragRef.current.active = false;
           return;
         }
-        const stats = computeRoiStats(
+        const result = finishEllipseRoi(
+          draft,
           pixels,
           instance.columns,
           instance.rows,
-          draft.x0,
-          draft.y0,
-          draft.x1,
-          draft.y1,
           instance.pixelSpacing.col,
           instance.pixelSpacing.row,
-          'ellipse',
+          { sliceIndex },
         );
-        if (stats.count > 0 && Math.hypot(draft.x1 - draft.x0, draft.y1 - draft.y0) > 2) {
-          onMeasuresChange([
-            ...measures,
-            {
-              kind: 'roi',
-              shape: 'ellipse',
-              id: `${Date.now()}`,
-              sliceIndex,
-              x0: draft.x0,
-              y0: draft.y0,
-              x1: draft.x1,
-              y1: draft.y1,
-              mean: stats.mean,
-              sd: stats.sd,
-              min: stats.min,
-              max: stats.max,
-              areaMm2: stats.areaMm2,
-            },
-          ]);
-        }
+        if (result) onMeasuresChange([...measures, result.annotation]);
       } else if (drag.mode === 'arrow') {
         if (Math.hypot(draft.x1 - draft.x0, draft.y1 - draft.y0) > 2) {
           onMeasuresChange([
@@ -537,6 +532,16 @@ export function Viewport({
   };
 
   const ctxItems: ContextMenuItem[] = [
+    ...(ctxMenu?.hitId
+      ? [
+          {
+            id: 'delete-annotation',
+            label: t('ctx.deleteAnnotation'),
+            danger: true,
+          } satisfies ContextMenuItem,
+          { id: 'sep-del', separator: true } satisfies ContextMenuItem,
+        ]
+      : []),
     { id: 'reset-view', label: t('ctx.resetView') },
     { id: 'toggle-invert', label: t('ctx.toggleInvert') },
     { id: 'flip-h', label: t('ctx.flipH') },
@@ -555,6 +560,16 @@ export function Viewport({
     { id: 'show-tags', label: t('ctx.showTags'), disabled: !instance },
   ];
 
+  const onCtxSelect = (id: string) => {
+    if (id === 'delete-annotation' && ctxMenu?.hitId) {
+      const hitId = ctxMenu.hitId;
+      onMeasuresChange(measures.filter((m) => m.id !== hitId));
+      onSelectAnnotation?.(null);
+      return;
+    }
+    onContextAction?.(id);
+  };
+
   return (
     <div
       className="viewport"
@@ -565,8 +580,14 @@ export function Viewport({
       onPointerUp={onPointerUp}
       onContextMenu={(e) => {
         e.preventDefault();
-        if (!onContextAction) return;
-        setCtxMenu({ x: e.clientX, y: e.clientY });
+        e.stopPropagation();
+        const img = toImage(e.clientX, e.clientY);
+        const hit = img
+          ? pickAnnotation(measures, img, annotationHitSlop(zoom), { sliceIndex })
+          : null;
+        if (hit) onSelectAnnotation?.(hit.id);
+        if (!onContextAction && !hit) return;
+        setCtxMenu({ x: e.clientX, y: e.clientY, hitId: hit?.id ?? null });
       }}
     >
       <canvas ref={canvasRef} />
@@ -587,6 +608,7 @@ export function Viewport({
           draft={draft}
           probe={probe}
           sliceIndex={sliceIndex}
+          selectedId={selectedAnnotationId}
         />
       )}
       <div className="viewport__overlay">
@@ -615,13 +637,13 @@ export function Viewport({
           )}
         </div>
       </div>
-      {ctxMenu && onContextAction && (
+      {ctxMenu && (onContextAction || ctxMenu.hitId) && (
         <ContextMenu
           x={ctxMenu.x}
           y={ctxMenu.y}
           items={ctxItems}
           onClose={() => setCtxMenu(null)}
-          onSelect={(id) => onContextAction(id)}
+          onSelect={onCtxSelect}
         />
       )}
     </div>
@@ -639,6 +661,7 @@ function OverlayCanvas({
   draft,
   probe,
   sliceIndex,
+  selectedId = null,
 }: {
   width: number;
   height: number;
@@ -650,6 +673,7 @@ function OverlayCanvas({
   draft: DraftOverlay | null;
   probe: { x: number; y: number; value: number; label?: string } | null;
   sliceIndex: number;
+  selectedId?: string | null;
 }) {
   const ref = useRef<HTMLCanvasElement>(null);
 
@@ -681,6 +705,7 @@ function OverlayCanvas({
           draftMeasure: draft,
           probe,
           sliceIndex,
+          selectedId,
         });
       }
     };
@@ -688,7 +713,7 @@ function OverlayCanvas({
     const ro = new ResizeObserver(resize);
     ro.observe(parent);
     return () => ro.disconnect();
-  }, [width, height, zoom, pan, flipH, flipV, measures, draft, probe, sliceIndex]);
+  }, [width, height, zoom, pan, flipH, flipV, measures, draft, probe, sliceIndex, selectedId]);
 
   return <canvas ref={ref} className="viewport__overlay-canvas" />;
 }

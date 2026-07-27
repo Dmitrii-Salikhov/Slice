@@ -17,11 +17,26 @@ export type MessageKey =
   | 'app.selectSeries'
   | 'app.dropHint'
   | 'app.dropOverlay'
+  | 'loadStudy.title'
+  | 'loadStudy.hint'
+  | 'loadStudy.browse'
+  | 'loadStudy.browseTip'
+  | 'loadStudy.dropHint'
+  | 'loadStudy.files'
+  | 'loadStudy.filesTip'
+  | 'loadStudy.media'
+  | 'loadStudy.mediaEmpty'
+  | 'loadStudy.refresh'
+  | 'loadStudy.pacs'
+  | 'toolbar.loadStudyShort'
+  | 'toolbar.newStudyShort'
+  | 'toolbar.newStudyTip'
   | 'ctx.resetView'
   | 'ctx.toggleInvert'
   | 'ctx.flipH'
   | 'ctx.flipV'
   | 'ctx.clearMeasures'
+  | 'ctx.deleteAnnotation'
   | 'ctx.exportJpeg'
   | 'ctx.exportPng'
   | 'ctx.copyPatient'
@@ -62,6 +77,7 @@ export type MessageKey =
   | 'tags.colVr'
   | 'tags.colValue'
   | 'error.noApi'
+  | 'error.restartRequired'
   | 'error.noFiles'
   | 'error.noParse'
   | 'error.loadCancelled'
@@ -301,7 +317,7 @@ type Dict = Record<MessageKey, string>;
 
 const en: Dict = {
   'app.tag': 'DICOM Viewer',
-  'app.emptySubtitle': 'Local DICOM viewer — folders, ZIP, CD/DVD, PACS, W/L, MPR',
+  'app.emptySubtitle': 'Local DICOM viewer — load a study from disk, ZIP, CD/DVD or PACS',
   'app.openFolder': 'Open folder',
   'app.openDicomFolder': 'Open DICOM folder',
   'app.startWith': 'Start with',
@@ -316,11 +332,27 @@ const en: Dict = {
   'app.selectSeries': 'Select series',
   'app.dropHint': 'Or drag a folder / ZIP / DICOM files into the window',
   'app.dropOverlay': 'Drop DICOM files, folders, or ZIP archives',
+  'loadStudy.title': 'Load study',
+  'loadStudy.hint':
+    'Pick a folder, ZIP, or DICOM files — Slice detects the source automatically. Optical discs appear below when inserted.',
+  'loadStudy.browse': 'Choose on this computer…',
+  'loadStudy.browseTip': 'Open a study folder, ZIP archive, or DICOM files',
+  'loadStudy.dropHint': 'Or drop a folder / ZIP / files onto this window',
+  'loadStudy.files': 'ZIP or DICOM files…',
+  'loadStudy.filesTip': 'Open a ZIP archive or individual DICOM files',
+  'loadStudy.media': 'Detected discs',
+  'loadStudy.mediaEmpty': 'No CD/DVD with DICOM detected',
+  'loadStudy.refresh': 'Refresh',
+  'loadStudy.pacs': 'PACS / network…',
+  'toolbar.loadStudyShort': 'Load',
+  'toolbar.newStudyShort': 'New',
+  'toolbar.newStudyTip': 'Close the current study and return to the start screen',
   'ctx.resetView': 'Reset zoom / pan',
   'ctx.toggleInvert': 'Invert grayscale',
   'ctx.flipH': 'Flip horizontal',
   'ctx.flipV': 'Flip vertical',
-  'ctx.clearMeasures': 'Clear measurements',
+  'ctx.clearMeasures': 'Clear all annotations',
+  'ctx.deleteAnnotation': 'Delete annotation',
   'ctx.exportJpeg': 'Export JPEG…',
   'ctx.exportPng': 'Export PNG…',
   'ctx.copyPatient': 'Copy patient / series info',
@@ -361,6 +393,7 @@ const en: Dict = {
   'tags.colVr': 'VR',
   'tags.colValue': 'Value',
   'error.noApi': 'Electron API unavailable — run via npm run dev',
+  'error.restartRequired': 'App needs a full restart (npm run dev) — main process is out of date',
   'error.noFiles': 'No DICOM-like files found',
   'error.noParse': 'Could not parse any DICOM files',
   'error.loadCancelled': 'Load cancelled',
@@ -401,9 +434,9 @@ const en: Dict = {
   'toolbar.pacsTip': 'Query (C-FIND), retrieve (C-MOVE/C-GET), send (C-STORE)',
   'toolbar.export': 'Export',
   'toolbar.exportJpeg': 'JPEG',
-  'toolbar.exportJpegTip': 'Export current slice as JPEG (current W/L)',
+  'toolbar.exportJpegTip': 'Export the current view as JPEG (W/L + annotations)',
   'toolbar.exportPng': 'PNG',
-  'toolbar.exportPngTip': 'Export current slice as PNG (current W/L)',
+  'toolbar.exportPngTip': 'Export the current view as PNG (W/L + annotations)',
   'toolbar.exportDicom': 'Anon',
   'toolbar.exportDicomTip': 'Export current instance as anonymized DICOM',
   'toolbar.exportSeries': 'A-Series',
@@ -483,8 +516,8 @@ const en: Dict = {
   'toolbar.webglTip': 'Use WebGL2 slice renderer',
   'toolbar.zoomReset': 'Reset zoom',
   'toolbar.zoomResetTip': 'Reset zoom and pan to default',
-  'toolbar.clearMeasures': 'Clear meas.',
-  'toolbar.clearMeasuresTip': 'Clear length measurements',
+  'toolbar.clearMeasures': 'Clear all',
+  'toolbar.clearMeasuresTip': 'Clear all annotations (length, angle, ROI, arrows)',
   'toolbar.lang': 'EN',
   'toolbar.langTip': 'Switch interface language',
   'zip.passwordTitle': 'Encrypted ZIP',
@@ -599,7 +632,7 @@ const en: Dict = {
 
 const ru: Dict = {
   'app.tag': 'DICOM-просмотрщик',
-  'app.emptySubtitle': 'Локальный DICOM — папки, ZIP, CD/DVD, PACS, W/L, MPR',
+  'app.emptySubtitle': 'Локальный DICOM — загрузка с диска, ZIP, CD/DVD или PACS',
   'app.openFolder': 'Открыть папку',
   'app.openDicomFolder': 'Открыть папку DICOM',
   'app.startWith': 'Запустите через',
@@ -614,11 +647,27 @@ const ru: Dict = {
   'app.selectSeries': 'Выбрать серию',
   'app.dropHint': 'Или перетащите папку / ZIP / DICOM в окно',
   'app.dropOverlay': 'Отпустите DICOM, папки или ZIP',
+  'loadStudy.title': 'Загрузить исследование',
+  'loadStudy.hint':
+    'Выберите папку, ZIP или DICOM — программа сама определит источник. Вставленные диски появятся ниже.',
+  'loadStudy.browse': 'Выбрать на этом компьютере…',
+  'loadStudy.browseTip': 'Открыть папку с исследованием, ZIP-архив или DICOM-файлы',
+  'loadStudy.dropHint': 'Или перетащите папку / ZIP / файлы в это окно',
+  'loadStudy.files': 'ZIP или DICOM-файлы…',
+  'loadStudy.filesTip': 'Открыть ZIP-архив или отдельные DICOM-файлы',
+  'loadStudy.media': 'Найденные диски',
+  'loadStudy.mediaEmpty': 'CD/DVD с DICOM не обнаружены',
+  'loadStudy.refresh': 'Обновить',
+  'loadStudy.pacs': 'PACS / сеть…',
+  'toolbar.loadStudyShort': 'Загрузить',
+  'toolbar.newStudyShort': 'Новое',
+  'toolbar.newStudyTip': 'Закрыть текущее исследование и вернуться на стартовый экран',
   'ctx.resetView': 'Сбросить масштаб / pan',
   'ctx.toggleInvert': 'Инверсия',
   'ctx.flipH': 'Отразить по горизонтали',
   'ctx.flipV': 'Отразить по вертикали',
-  'ctx.clearMeasures': 'Очистить измерения',
+  'ctx.clearMeasures': 'Очистить все метки',
+  'ctx.deleteAnnotation': 'Удалить метку',
   'ctx.exportJpeg': 'Экспорт JPEG…',
   'ctx.exportPng': 'Экспорт PNG…',
   'ctx.copyPatient': 'Копировать пациента / серию',
@@ -659,6 +708,7 @@ const ru: Dict = {
   'tags.colVr': 'VR',
   'tags.colValue': 'Значение',
   'error.noApi': 'API Electron недоступен — запустите npm run dev',
+  'error.restartRequired': 'Нужен полный перезапуск (npm run dev) — main-процесс устарел',
   'error.noFiles': 'DICOM-файлы не найдены',
   'error.noParse': 'Не удалось разобрать DICOM-файлы',
   'error.loadCancelled': 'Загрузка отменена',
@@ -699,9 +749,9 @@ const ru: Dict = {
   'toolbar.pacsTip': 'Поиск (C-FIND), получение (C-MOVE/C-GET), отправка (C-STORE)',
   'toolbar.export': 'Экспорт',
   'toolbar.exportJpeg': 'JPEG',
-  'toolbar.exportJpegTip': 'Экспорт текущего среза в JPEG (текущий W/L)',
+  'toolbar.exportJpegTip': 'Экспорт текущего вида в JPEG (W/L + аннотации)',
   'toolbar.exportPng': 'PNG',
-  'toolbar.exportPngTip': 'Экспорт текущего среза в PNG (текущий W/L)',
+  'toolbar.exportPngTip': 'Экспорт текущего вида в PNG (W/L + аннотации)',
   'toolbar.exportDicom': 'Anon',
   'toolbar.exportDicomTip': 'Экспорт текущего файла как обезличенный DICOM',
   'toolbar.exportSeries': 'A-серия',
@@ -781,8 +831,8 @@ const ru: Dict = {
   'toolbar.webglTip': 'Рендер среза через WebGL2',
   'toolbar.zoomReset': 'Сброс масштаба',
   'toolbar.zoomResetTip': 'Сбросить масштаб и сдвиг',
-  'toolbar.clearMeasures': 'Сброс изм.',
-  'toolbar.clearMeasuresTip': 'Очистить измерения длины',
+  'toolbar.clearMeasures': 'Сброс меток',
+  'toolbar.clearMeasuresTip': 'Очистить все метки (длина, угол, ROI, стрелки)',
   'toolbar.lang': 'RU',
   'toolbar.langTip': 'Переключить язык интерфейса',
   'zip.passwordTitle': 'Зашифрованный ZIP',

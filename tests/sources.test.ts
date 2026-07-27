@@ -17,6 +17,7 @@ const {
   hasDicomContent,
   classifyFromDiskutil,
   listMediaSources,
+  parseWindowsLogicalDiskJson,
 } = require('../electron/media.cjs');
 
 describe('zip helpers', () => {
@@ -174,18 +175,46 @@ describe('media helpers', () => {
     });
   });
 
-  it('listMediaSources returns an array without throwing', async () => {
-    const list = await listMediaSources();
-    expect(Array.isArray(list)).toBe(true);
-    for (const item of list) {
-      expect(item).toMatchObject({
-        id: expect.any(String),
-        name: expect.any(String),
-        path: expect.any(String),
-        kind: expect.any(String),
-        hasDicom: expect.any(Boolean),
-        platform: expect.any(String),
-      });
-    }
+  it('parses Windows logical-disk JSON without WMI', async () => {
+    const list = await parseWindowsLogicalDiskJson(
+      JSON.stringify([
+        { DeviceID: 'D:', VolumeName: 'DICOM_CD', DriveType: 5 },
+        { DeviceID: 'E:', VolumeName: 'USB', DriveType: 2 },
+      ]),
+    );
+    expect(list).toHaveLength(2);
+    expect(list[0]).toMatchObject({
+      path: 'D:\\',
+      name: 'DICOM_CD',
+      kind: 'optical',
+      platform: 'win32',
+      hasDicom: expect.any(Boolean),
+    });
+    expect(list[1]).toMatchObject({
+      path: 'E:\\',
+      kind: 'removable',
+      platform: 'win32',
+    });
+    expect(await parseWindowsLogicalDiskJson('not-json')).toEqual([]);
+    expect(await parseWindowsLogicalDiskJson('')).toEqual([]);
   });
+
+  it(
+    'listMediaSources returns an array without throwing',
+    async () => {
+      const list = await listMediaSources();
+      expect(Array.isArray(list)).toBe(true);
+      for (const item of list) {
+        expect(item).toMatchObject({
+          id: expect.any(String),
+          name: expect.any(String),
+          path: expect.any(String),
+          kind: expect.any(String),
+          hasDicom: expect.any(Boolean),
+          platform: expect.any(String),
+        });
+      }
+    },
+    12_000,
+  );
 });

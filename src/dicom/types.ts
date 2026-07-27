@@ -72,9 +72,13 @@ export type ViewerTool =
   | 'roi'
   | 'arrow';
 
+export type MprPlane = 'axial' | 'sagittal' | 'coronal';
+
 type AnnotationBase = {
   id: string;
   sliceIndex: number;
+  /** Set for annotations drawn on an MPR plane (hidden in stack view). */
+  mprPlane?: MprPlane;
 };
 
 export type LengthMeasure = AnnotationBase & {
@@ -172,8 +176,6 @@ export type VolumeData = {
 
 /** How orthogonal MPR planes are defined. */
 export type MprBasis = 'patient' | 'stack';
-
-export type MprPlane = 'axial' | 'sagittal' | 'coronal';
 
 export type ViewportState = {
   sliceIndex: number;

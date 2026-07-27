@@ -8,6 +8,8 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
 const EXPECTED_API_METHODS: (keyof SliceApi)[] = [
   'openFolder',
+  'openStudy',
+  'openStudyFiles',
   'openZipDialog',
   'openFileDialog',
   'openDicomFilesDialog',
@@ -54,6 +56,8 @@ describe('Slice API contract', () => {
   it('main process registers IPC channels for new sources', () => {
     const main = fs.readFileSync(path.join(root, 'electron/main.cjs'), 'utf8');
     for (const channel of [
+      'dialog:openStudy',
+      'dialog:openStudyFiles',
       'dialog:openZip',
       'dialog:openFile',
       'dialog:openDicomFiles',

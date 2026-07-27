@@ -8,12 +8,10 @@ type Props = {
   onViewModeChange: (m: ViewMode) => void;
   mprAvailable: boolean;
   compareAvailable: boolean;
-  onOpenFolder: () => void;
-  onOpenFiles?: () => void;
-  onOpenZip: () => void;
-  onOpenMedia: () => void;
-  onOpenPacs: () => void;
+  onLoadStudy: () => void;
+  onNewStudy: () => void;
   canOpen: boolean;
+  hasStudy: boolean;
   canExport: boolean;
   onExportJpeg: () => void;
   onExportPng: () => void;
@@ -30,12 +28,10 @@ export function Toolbar({
   onViewModeChange,
   mprAvailable,
   compareAvailable,
-  onOpenFolder,
-  onOpenFiles,
-  onOpenZip,
-  onOpenMedia,
-  onOpenPacs,
+  onLoadStudy,
+  onNewStudy,
   canOpen,
+  hasStudy,
   canExport,
   onExportJpeg,
   onExportPng,
@@ -50,53 +46,24 @@ export function Toolbar({
 
   return (
     <div className="toolbar toolbar--header">
-      <div className="toolbar__group" role="group" aria-label={t('toolbar.openFolder')}>
+      <div className="toolbar__group" role="group" aria-label={t('loadStudy.title')}>
         <button
           type="button"
           className="btn btn--primary btn--icon"
-          onClick={onOpenFolder}
+          onClick={onLoadStudy}
           disabled={!canOpen}
-          title={`${t('toolbar.openFolderTip')} (Ctrl+O)`}
+          title={`${t('loadStudy.browseTip')} (Ctrl+O)`}
         >
-          <span className="btn__label">{t('toolbar.openFolderShort')}</span>
-        </button>
-        {onOpenFiles && (
-          <button
-            type="button"
-            className="btn btn--ghost btn--icon"
-            onClick={onOpenFiles}
-            disabled={!canOpen}
-            title={`${t('toolbar.openFilesTip')} (Ctrl+Shift+O)`}
-          >
-            <span className="btn__label">{t('toolbar.openFilesShort')}</span>
-          </button>
-        )}
-        <button
-          type="button"
-          className="btn btn--ghost btn--icon"
-          onClick={onOpenZip}
-          disabled={!canOpen}
-          title={t('toolbar.openZipTip')}
-        >
-          <span className="btn__label">{t('toolbar.openZip')}</span>
+          <span className="btn__label">{t('toolbar.loadStudyShort')}</span>
         </button>
         <button
           type="button"
           className="btn btn--ghost btn--icon"
-          onClick={onOpenMedia}
-          disabled={!canOpen}
-          title={t('toolbar.openMediaTip')}
+          onClick={onNewStudy}
+          disabled={!canOpen || !hasStudy}
+          title={t('toolbar.newStudyTip')}
         >
-          <span className="btn__label">{t('toolbar.openMedia')}</span>
-        </button>
-        <button
-          type="button"
-          className="btn btn--ghost btn--icon"
-          onClick={onOpenPacs}
-          disabled={!canOpen}
-          title={t('toolbar.pacsTip')}
-        >
-          <span className="btn__label">{t('toolbar.pacs')}</span>
+          <span className="btn__label">{t('toolbar.newStudyShort')}</span>
         </button>
       </div>
 

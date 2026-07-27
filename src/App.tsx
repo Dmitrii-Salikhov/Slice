@@ -42,16 +42,22 @@ import {
   type DicomdirCatalog,
 } from './dicom/dicomdirTypes';
 import {
-  encodeSliceJpeg,
-  encodeSlicePng,
+  encodeRenderedSlice,
   suggestImageFileName,
+  type ImageExportFormat,
 } from './export/imageExport';
 import { anonymizeDicomBuffer, suggestDicomFileName } from './export/anonymize';
+import {
+  extractMprSlice,
+  planeIndexFromCursor,
+  resolveMprBasis,
+} from './viewer/mpr';
 import { useLocale } from './i18n/LocaleContext';
 import { useErrorLog } from './errorLog/ErrorLogContext';
 import { useUpdateLog } from './update/UpdateLogContext';
 import { checkGithubUpdate, type UpdateCheckResult } from './update/checkUpdates';
 import { GITHUB_REPO } from './config/github';
+import { LoadStudyDialog } from './components/LoadStudyDialog';
 import { TagBrowser } from './components/TagBrowser';
 import { isEditableTarget } from './shell/appCommands';
 import './App.css';
@@ -115,6 +121,7 @@ export default function App() {
   const [pitch, setPitch] = useState(20);
   const [mprLayoutMode, setMprLayoutMode] = useState<MprLayoutMode>('single');
   const [mprSinglePlane, setMprSinglePlane] = useState<MprPlane>('axial');
+  const [mprFocusPlane, setMprFocusPlane] = useState<MprPlane>('axial');
   const [mprBasis, setMprBasis] = useState<MprBasis>('patient');
   const [useWebGl, setUseWebGl] = useState(false);
   const [invertUser, setInvertUser] = useState(false);
@@ -123,6 +130,7 @@ export default function App() {
   const [tagsOpen, setTagsOpen] = useState(false);
   const [measures, setMeasures] = useState<Annotation[]>([]);
   const [compareMeasures, setCompareMeasures] = useState<Annotation[]>([]);
+  const [selectedAnnotationId, setSelectedAnnotationId] = useState<string | null>(null);
   const [cinePlaying, setCinePlaying] = useState(false);
   const [cineFps, setCineFps] = useState(10);
   const loadAbortRef = useRef<AbortController | null>(null);
@@ -138,6 +146,7 @@ export default function App() {
   );
   const [mediaOpen, setMediaOpen] = useState(false);
   const [pacsOpen, setPacsOpen] = useState(false);
+  const [loadStudyOpen, setLoadStudyOpen] = useState(false);
   const [dicomdirCatalog, setDicomdirCatalog] = useState<DicomdirCatalog | null>(null);
   const [dicomdirOpen, setDicomdirOpen] = useState(false);
 
@@ -155,6 +164,7 @@ export default function App() {
     setZoom(1);
     setPan({ x: 0, y: 0 });
     setMeasures([]);
+    setSelectedAnnotationId(null);
     setVolume(null);
     setInvertUser(false);
     setFlipH(false);
@@ -268,6 +278,43 @@ export default function App() {
     loadAbortRef.current?.abort();
     mprAbortRef.current?.abort();
   }, []);
+
+  const closeStudy = useCallback(() => {
+    cancelLoad();
+    sharedPixelCache.clear();
+    setStudies([]);
+    setActiveSeries(null);
+    setCompareSeries(null);
+    setVolume(null);
+    setMprBuilding(false);
+    setMprProgress(null);
+    setLoadedFiles([]);
+    setFolderPath(null);
+    setMeasures([]);
+    setCompareMeasures([]);
+    setSelectedAnnotationId(null);
+    setDicomdirCatalog(null);
+    setDicomdirOpen(false);
+    setTagsOpen(false);
+    setCinePlaying(false);
+    setPixelsRevision(0);
+    setSliceIndex(0);
+    setCompareSliceIndex(0);
+    setZoom(1);
+    setCompareZoom(1);
+    setPan({ x: 0, y: 0 });
+    setComparePan({ x: 0, y: 0 });
+    setInvertUser(false);
+    setFlipH(false);
+    setFlipV(false);
+    setViewMode('single');
+    setTool('scroll');
+    setCursor({ x: 0, y: 0, z: 0 });
+    setLoadStudyOpen(false);
+    setMediaOpen(false);
+    setPacsOpen(false);
+    setZipPrompt(null);
+  }, [cancelLoad]);
 
   const handleWebGlFailed = useCallback(() => {
     setUseWebGl(false);
@@ -445,6 +492,44 @@ export default function App() {
     [loadFromFiles, t, reportError, tryOpenDicomdir],
   );
 
+  const browseLoadStudy = useCallback(async () => {
+    if (!window.slice?.openStudy) {
+      reportError(t('error.restartRequired'), 'load');
+      return;
+    }
+    try {
+      const paths = await window.slice.openStudy();
+      if (paths.length === 0) return;
+      setLoadStudyOpen(false);
+      await handleDropPaths(paths);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      reportError(
+        /No handler registered/i.test(msg) ? t('error.restartRequired') : msg,
+        'load',
+      );
+    }
+  }, [handleDropPaths, reportError, t]);
+
+  const browseLoadStudyFiles = useCallback(async () => {
+    if (!window.slice?.openStudyFiles) {
+      reportError(t('error.restartRequired'), 'load');
+      return;
+    }
+    try {
+      const paths = await window.slice.openStudyFiles();
+      if (paths.length === 0) return;
+      setLoadStudyOpen(false);
+      await handleDropPaths(paths);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      reportError(
+        /No handler registered/i.test(msg) ? t('error.restartRequired') : msg,
+        'load',
+      );
+    }
+  }, [handleDropPaths, reportError, t]);
+
   const onDragEnter = useCallback((e: React.DragEvent) => {
     e.preventDefault();
     e.stopPropagation();
@@ -615,7 +700,6 @@ export default function App() {
     setVolume(null);
     setMprBuilding(true);
     setMprProgress({ loaded: 0, total: activeSeries.instances.length });
-    if (tool === 'length') setTool('crosshair');
 
     try {
       const vol = await buildVolumeProgressive(
@@ -652,7 +736,7 @@ export default function App() {
       setMprBuilding(false);
       setMprProgress(null);
     }
-  }, [activeSeries, readFile, reportError, t, tool]);
+  }, [activeSeries, readFile, reportError, t]);
 
   const changeViewMode = useCallback(
     (m: ViewMode) => {
@@ -724,61 +808,121 @@ export default function App() {
     [syncScroll, activeSeries, compareSeries],
   );
 
+  const exportImage = useCallback(
+    async (format: ImageExportFormat) => {
+      if (!window.slice) {
+        reportError(t('export.noInstance'), 'export');
+        return;
+      }
+
+      try {
+        let bytes: Uint8Array;
+        let fileName: string;
+
+        if (viewMode === 'mpr' && volume) {
+          const plane = mprLayoutMode === 'single' ? mprSinglePlane : mprFocusPlane;
+          const basis = resolveMprBasis(volume, mprBasis);
+          const index = planeIndexFromCursor(volume, plane, cursor, basis);
+          const slice = extractMprSlice(volume, plane, index, basis);
+          bytes = await encodeRenderedSlice({
+            width: slice.width,
+            height: slice.height,
+            windowLevel: wl,
+            pixels: slice.pixels,
+            invert: invertUser,
+            measures,
+            sliceIndex: slice.index,
+            mprPlane: plane,
+            format,
+          });
+          fileName = suggestImageFileName(
+            {
+              patientId: activeSeries?.patientId,
+              seriesDescription: activeSeries?.seriesDescription,
+              instanceNumber: slice.index + 1,
+              plane,
+            },
+            format,
+          );
+        } else {
+          if (!activeInstance) {
+            reportError(t('export.noInstance'), 'export');
+            return;
+          }
+          await sharedPixelCache.ensure(activeInstance, readFile);
+          bumpPixels();
+          const invert =
+            (activeInstance.photometricInterpretation === 'MONOCHROME1') !== invertUser;
+          bytes = await encodeRenderedSlice({
+            width: activeInstance.columns,
+            height: activeInstance.rows,
+            windowLevel: wl,
+            pixels: activeInstance.pixelsInt16 ?? activeInstance.pixels,
+            colorRgba: activeInstance.colorRgba,
+            invert,
+            flipH,
+            flipV,
+            measures,
+            sliceIndex,
+            format,
+          });
+          fileName = suggestImageFileName(activeInstance, format);
+        }
+
+        const path = await window.slice.saveFileDialog({
+          title: format === 'png' ? t('toolbar.exportPng') : t('toolbar.exportJpeg'),
+          defaultPath: fileName,
+          filters:
+            format === 'png'
+              ? [
+                  { name: 'PNG', extensions: ['png'] },
+                  { name: 'All files', extensions: ['*'] },
+                ]
+              : [
+                  { name: 'JPEG', extensions: ['jpg', 'jpeg'] },
+                  { name: 'All files', extensions: ['*'] },
+                ],
+        });
+        if (!path) return;
+        const written = await window.slice.writeFile(path, bytes);
+        if (!written?.ok) {
+          throw new Error(written?.error || t('export.fail'));
+        }
+        setFolderPath(t('export.saved', { path }));
+      } catch (e) {
+        reportError(e instanceof Error ? e.message : t('export.fail'), 'export');
+      }
+    },
+    [
+      viewMode,
+      volume,
+      mprLayoutMode,
+      mprSinglePlane,
+      mprFocusPlane,
+      mprBasis,
+      cursor,
+      wl,
+      invertUser,
+      measures,
+      activeSeries,
+      activeInstance,
+      flipH,
+      flipV,
+      sliceIndex,
+      readFile,
+      bumpPixels,
+      reportError,
+      t,
+    ],
+  );
+
   const exportJpeg = useCallback(async () => {
-    if (!window.slice || !activeInstance) {
-      reportError(t('export.noInstance'), 'export');
-      return;
-    }
-    try {
-      await sharedPixelCache.ensure(activeInstance, readFile);
-      bumpPixels();
-      const invert =
-        (activeInstance.photometricInterpretation === 'MONOCHROME1') !== invertUser;
-      const bytes = encodeSliceJpeg(activeInstance, wl, { invert });
-      const name = suggestImageFileName(activeInstance, 'jpeg');
-      const path = await window.slice.saveFileDialog({
-        title: t('toolbar.exportJpeg'),
-        defaultPath: name,
-        filters: [
-          { name: 'JPEG', extensions: ['jpg', 'jpeg'] },
-          { name: 'All files', extensions: ['*'] },
-        ],
-      });
-      if (!path) return;
-      await window.slice.writeFile(path, bytes);
-      setFolderPath(t('export.saved', { path }));
-    } catch (e) {
-      reportError(e instanceof Error ? e.message : t('export.fail'), 'export');
-    }
-  }, [activeInstance, wl, reportError, t, readFile, bumpPixels, invertUser]);
+    await exportImage('jpeg');
+  }, [exportImage]);
 
   const exportPng = useCallback(async () => {
-    if (!window.slice || !activeInstance) {
-      reportError(t('export.noInstance'), 'export');
-      return;
-    }
-    try {
-      await sharedPixelCache.ensure(activeInstance, readFile);
-      bumpPixels();
-      const invert =
-        (activeInstance.photometricInterpretation === 'MONOCHROME1') !== invertUser;
-      const bytes = await encodeSlicePng(activeInstance, wl, { invert });
-      const name = suggestImageFileName(activeInstance, 'png');
-      const path = await window.slice.saveFileDialog({
-        title: t('toolbar.exportPng'),
-        defaultPath: name,
-        filters: [
-          { name: 'PNG', extensions: ['png'] },
-          { name: 'All files', extensions: ['*'] },
-        ],
-      });
-      if (!path) return;
-      await window.slice.writeFile(path, bytes);
-      setFolderPath(t('export.saved', { path }));
-    } catch (e) {
-      reportError(e instanceof Error ? e.message : t('export.fail'), 'export');
-    }
-  }, [activeInstance, wl, reportError, t, readFile, bumpPixels, invertUser]);
+    await exportImage('png');
+  }, [exportImage]);
 
   const exportDicomAnon = useCallback(async () => {
     if (!window.slice || !activeInstance?.filePath) {
@@ -889,6 +1033,7 @@ export default function App() {
         );
       }
       setMeasures(parsed.annotations);
+      setSelectedAnnotationId(null);
     } catch (e) {
       reportError(e instanceof Error ? e.message : String(e), 'annotations');
     }
@@ -1035,7 +1180,15 @@ export default function App() {
   const clearAllMeasures = useCallback(() => {
     setMeasures([]);
     setCompareMeasures([]);
+    setSelectedAnnotationId(null);
   }, []);
+
+  const deleteSelectedAnnotation = useCallback(() => {
+    if (!selectedAnnotationId) return;
+    setMeasures((prev) => prev.filter((m) => m.id !== selectedAnnotationId));
+    setCompareMeasures((prev) => prev.filter((m) => m.id !== selectedAnnotationId));
+    setSelectedAnnotationId(null);
+  }, [selectedAnnotationId]);
 
   const toggleCine = useCallback(() => {
     if (!activeSeries || activeDocument || activeSeries.instances.length <= 1) return;
@@ -1045,6 +1198,9 @@ export default function App() {
   const dispatchCommand = useCallback(
     (command: string, payload?: unknown) => {
       switch (command) {
+        case 'open-study':
+          setLoadStudyOpen(true);
+          break;
         case 'open-folder':
           void openFolder();
           break;
@@ -1059,6 +1215,9 @@ export default function App() {
           break;
         case 'open-pacs':
           setPacsOpen(true);
+          break;
+        case 'new-study':
+          closeStudy();
           break;
         case 'export-jpeg':
           void exportJpeg();
@@ -1133,6 +1292,7 @@ export default function App() {
       openFolder,
       openFiles,
       openZip,
+      closeStudy,
       exportJpeg,
       exportPng,
       exportDicomAnon,
@@ -1229,9 +1389,28 @@ export default function App() {
     const onKey = (e: KeyboardEvent) => {
       if (isEditableTarget(e.target)) return;
 
-      if (e.key === 'Escape' && (loading || mprBuilding)) {
+      if (e.key === 'Escape') {
+        if (loading || mprBuilding) {
+          e.preventDefault();
+          cancelLoad();
+          return;
+        }
+        if (selectedAnnotationId) {
+          e.preventDefault();
+          setSelectedAnnotationId(null);
+          return;
+        }
+      }
+
+      if (
+        (e.key === 'Delete' || e.key === 'Backspace') &&
+        selectedAnnotationId &&
+        !e.ctrlKey &&
+        !e.metaKey &&
+        !e.altKey
+      ) {
         e.preventDefault();
-        cancelLoad();
+        deleteSelectedAnnotation();
         return;
       }
 
@@ -1299,6 +1478,8 @@ export default function App() {
     mprBuilding,
     cancelLoad,
     viewMode,
+    selectedAnnotationId,
+    deleteSelectedAnnotation,
   ]);
 
   const onWlDelta = useCallback((dCenter: number, dWidth: number) => {
@@ -1415,13 +1596,11 @@ export default function App() {
           onViewModeChange={changeViewMode}
           mprAvailable={mprAvailable}
           compareAvailable={compareAvailable}
-          onOpenFolder={openFolder}
-          onOpenFiles={() => void openFiles()}
-          onOpenZip={openZip}
-          onOpenMedia={() => setMediaOpen(true)}
-          onOpenPacs={() => setPacsOpen(true)}
+          onLoadStudy={() => setLoadStudyOpen(true)}
+          onNewStudy={closeStudy}
           canOpen={hasApi && !loading}
-          canExport={hasApi && !loading && !!activeInstance}
+          hasStudy={!!activeSeries || studies.length > 0 || !!folderPath}
+          canExport={hasApi && !loading && (!!activeInstance || (viewMode === 'mpr' && !!volume))}
           onExportJpeg={() => void exportJpeg()}
           onExportPng={() => void exportPng()}
           onExportDicomAnon={() => void exportDicomAnon()}
@@ -1451,6 +1630,25 @@ export default function App() {
         onCancel={() => setZipPrompt(null)}
         onSubmit={(password) => {
           if (zipPrompt) void openZipWithPassword(zipPrompt.path, password);
+        }}
+      />
+      <LoadStudyDialog
+        open={loadStudyOpen}
+        busy={loading}
+        onClose={() => setLoadStudyOpen(false)}
+        onBrowseLocal={() => void browseLoadStudy()}
+        onBrowseFiles={() => void browseLoadStudyFiles()}
+        onOpenPaths={(paths) => {
+          setLoadStudyOpen(false);
+          void handleDropPaths(paths);
+        }}
+        onOpenMedia={(m) => {
+          setLoadStudyOpen(false);
+          void openMediaSource(m);
+        }}
+        onOpenPacs={() => {
+          setLoadStudyOpen(false);
+          setPacsOpen(true);
         }}
       />
       <MediaDialog
@@ -1578,41 +1776,12 @@ export default function App() {
               <button
                 type="button"
                 className="btn btn--primary"
-                onClick={openFolder}
+                onClick={() => setLoadStudyOpen(true)}
                 disabled={!hasApi || loading}
-                title={t('toolbar.openFolderTip')}
+                title={t('loadStudy.browseTip')}
               >
-                {t('app.openDicomFolder')}
+                {t('loadStudy.title')}
               </button>
-              <div className="empty__row">
-                <button
-                  type="button"
-                  className="btn btn--ghost"
-                  onClick={openZip}
-                  disabled={!hasApi || loading}
-                  title={t('toolbar.openZipTip')}
-                >
-                  {t('toolbar.openZip')}
-                </button>
-                <button
-                  type="button"
-                  className="btn btn--ghost"
-                  onClick={() => setMediaOpen(true)}
-                  disabled={!hasApi || loading}
-                  title={t('toolbar.openMediaTip')}
-                >
-                  {t('toolbar.openMedia')}
-                </button>
-                <button
-                  type="button"
-                  className="btn btn--ghost"
-                  onClick={() => setPacsOpen(true)}
-                  disabled={!hasApi || loading}
-                  title={t('toolbar.pacsTip')}
-                >
-                  {t('toolbar.pacs')}
-                </button>
-              </div>
               <p className="empty__drop">{t('app.dropHint')}</p>
               {!hasApi && (
                 <p className="empty__note">
@@ -1656,9 +1825,18 @@ export default function App() {
               layoutMode={mprLayoutMode}
               onLayoutModeChange={setMprLayoutMode}
               singlePlane={mprSinglePlane}
-              onSinglePlaneChange={setMprSinglePlane}
+              onSinglePlaneChange={(plane) => {
+                setMprSinglePlane(plane);
+                setMprFocusPlane(plane);
+              }}
               mprBasis={mprBasis}
               onMprBasisChange={setMprBasis}
+              measures={measures}
+              onMeasuresChange={setMeasures}
+              selectedAnnotationId={selectedAnnotationId}
+              onSelectAnnotation={setSelectedAnnotationId}
+              onClearMeasures={clearAllMeasures}
+              onPlaneFocus={setMprFocusPlane}
             />
           ) : viewMode === 'compare' && compareSeries ? (
             <CompareLayout
@@ -1670,6 +1848,8 @@ export default function App() {
                 onSliceChange: onPrimarySliceChange,
                 measures,
                 onMeasuresChange: setMeasures,
+                selectedAnnotationId,
+                onSelectAnnotation: setSelectedAnnotationId,
                 pixelsRevision,
                 onContextAction: onViewportContext,
               }}
@@ -1681,6 +1861,8 @@ export default function App() {
                 onSliceChange: onCompareSliceChange,
                 measures: compareMeasures,
                 onMeasuresChange: setCompareMeasures,
+                selectedAnnotationId,
+                onSelectAnnotation: setSelectedAnnotationId,
                 pixelsRevision,
                 onContextAction: onViewportContext,
               }}
@@ -1719,6 +1901,8 @@ export default function App() {
               useWebGl={useWebGl}
               measures={measures}
               onMeasuresChange={setMeasures}
+              selectedAnnotationId={selectedAnnotationId}
+              onSelectAnnotation={setSelectedAnnotationId}
               pixelsRevision={pixelsRevision}
               onContextAction={onViewportContext}
               invert={displayInvert}
