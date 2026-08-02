@@ -696,6 +696,7 @@ export default function App() {
     mprAbortRef.current?.abort();
     const controller = new AbortController();
     mprAbortRef.current = controller;
+    setCinePlaying(false);
     setViewMode('mpr');
     setVolume(null);
     setMprBuilding(true);
@@ -1713,32 +1714,6 @@ export default function App() {
               tool={tool}
               onToolChange={setTool}
               viewMode={viewMode}
-              syncScroll={syncScroll}
-              onSyncScrollChange={(v) => {
-                setSyncScroll(v);
-                if (v && activeSeries && compareSeries) {
-                  setCompareSliceIndex(
-                    mapSliceIndex(
-                      sliceIndex,
-                      activeSeries.instances.length,
-                      compareSeries.instances.length,
-                    ),
-                  );
-                }
-              }}
-              syncWl={syncWl}
-              onSyncWlChange={(v) => {
-                setSyncWl(v);
-                if (v) setCompareWl(wl);
-              }}
-              syncZoom={syncZoom}
-              onSyncZoomChange={(v) => {
-                setSyncZoom(v);
-                if (v) {
-                  setCompareZoom(zoom);
-                  setComparePan(pan);
-                }
-              }}
               wl={wl}
               onWlChange={(next) => {
                 setWl(next);
@@ -1884,6 +1859,32 @@ export default function App() {
               flipH={flipH}
               flipV={flipV}
               onWebGlFailed={handleWebGlFailed}
+              syncScroll={syncScroll}
+              onSyncScrollChange={(v) => {
+                setSyncScroll(v);
+                if (v && activeSeries && compareSeries) {
+                  setCompareSliceIndex(
+                    mapSliceIndex(
+                      sliceIndex,
+                      activeSeries.instances.length,
+                      compareSeries.instances.length,
+                    ),
+                  );
+                }
+              }}
+              syncWl={syncWl}
+              onSyncWlChange={(v) => {
+                setSyncWl(v);
+                if (v) setCompareWl(wl);
+              }}
+              syncZoom={syncZoom}
+              onSyncZoomChange={(v) => {
+                setSyncZoom(v);
+                if (v) {
+                  setCompareZoom(zoom);
+                  setComparePan(pan);
+                }
+              }}
             />
           ) : (
             <Viewport

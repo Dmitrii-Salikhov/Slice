@@ -9,12 +9,6 @@ type Props = {
   tool: ViewerTool;
   onToolChange: (t: ViewerTool) => void;
   viewMode: ViewMode;
-  syncScroll: boolean;
-  onSyncScrollChange: (v: boolean) => void;
-  syncWl: boolean;
-  onSyncWlChange: (v: boolean) => void;
-  syncZoom: boolean;
-  onSyncZoomChange: (v: boolean) => void;
   wl: WindowLevel;
   onWlChange: (wl: WindowLevel) => void;
   onPreset: (name: string) => void;
@@ -81,12 +75,6 @@ export function ViewerToolRail({
   tool,
   onToolChange,
   viewMode,
-  syncScroll,
-  onSyncScrollChange,
-  syncWl,
-  onSyncWlChange,
-  syncZoom,
-  onSyncZoomChange,
   wl,
   onWlChange,
   onPreset,
@@ -217,35 +205,6 @@ export function ViewerToolRail({
           </button>
         )}
       </div>
-
-      {viewMode === 'compare' && (
-        <div className="viewer-rail__section viewer-rail__checks">
-          <label className="viewer-rail__check" title={t('compare.syncScrollTip')}>
-            <input
-              type="checkbox"
-              checked={syncScroll}
-              onChange={(e) => onSyncScrollChange(e.target.checked)}
-            />
-            {t('compare.syncScroll')}
-          </label>
-          <label className="viewer-rail__check" title={t('compare.syncWlTip')}>
-            <input
-              type="checkbox"
-              checked={syncWl}
-              onChange={(e) => onSyncWlChange(e.target.checked)}
-            />
-            {t('compare.syncWl')}
-          </label>
-          <label className="viewer-rail__check" title={t('compare.syncZoomTip')}>
-            <input
-              type="checkbox"
-              checked={syncZoom}
-              onChange={(e) => onSyncZoomChange(e.target.checked)}
-            />
-            {t('compare.syncZoom')}
-          </label>
-        </div>
-      )}
 
       <div className="viewer-rail__section">
         <label className="viewer-rail__check" title={t('toolbar.webglTip')}>

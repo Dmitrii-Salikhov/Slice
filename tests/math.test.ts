@@ -75,4 +75,18 @@ describe('math', () => {
     // Image 50×50 fitted into 200×100 → letterboxed; far right is outside
     expect(clientToImage(199, 50, canvas, 50, 50, 1, 0, 0)).toBeNull();
   });
+
+  it('clientToImage allowOutside maps letterbox clicks to extended coords', () => {
+    const canvas = document.createElement('canvas');
+    canvas.width = 200;
+    canvas.height = 100;
+    Object.defineProperty(canvas, 'getBoundingClientRect', {
+      value: () => ({ left: 0, top: 0, width: 200, height: 100, right: 200, bottom: 100 }),
+    });
+    const pt = clientToImage(10, 50, canvas, 50, 50, 1, 0, 0, false, false, 1, 1, {
+      allowOutside: true,
+    });
+    expect(pt).not.toBeNull();
+    expect(pt!.x).toBeLessThan(0);
+  });
 });

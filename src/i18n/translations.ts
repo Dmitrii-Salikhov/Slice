@@ -311,6 +311,8 @@ export type MessageKey =
   | 'mpr.basisPatientTip'
   | 'mpr.basisStackTip'
   | 'mpr.basisPatientUnavailable'
+  | 'mpr.syncScroll'
+  | 'mpr.syncScrollTip'
   | 'viewport.webgl';
 
 type Dict = Record<MessageKey, string>;
@@ -492,11 +494,11 @@ const en: Dict = {
   'compare.seriesHint': 'Click a series for A; use B to pick the compare series',
   'compare.setB': 'Set as compare series (B)',
   'compare.sync': 'Sync',
-  'compare.syncScroll': 'Scroll',
-  'compare.syncScrollTip': 'Link slice position between A and B',
-  'compare.syncWl': 'W/L',
+  'compare.syncScroll': 'Sync scroll',
+  'compare.syncScrollTip': 'Scroll series A and B together (off by default)',
+  'compare.syncWl': 'Sync W/L',
   'compare.syncWlTip': 'Share window/level between A and B',
-  'compare.syncZoom': 'Zoom',
+  'compare.syncZoom': 'Sync zoom',
   'compare.syncZoomTip': 'Share zoom and pan between A and B',
   'toolbar.window': 'W',
   'toolbar.windowTip': 'Window width',
@@ -627,6 +629,8 @@ const en: Dict = {
   'mpr.basisPatientTip': 'Anatomical planes in patient space (RadiAnt-style)',
   'mpr.basisStackTip': 'Cut along acquisition voxel axes (legacy fallback)',
   'mpr.basisPatientUnavailable': 'Patient geometry missing (IOP/IPP) — use Stack',
+  'mpr.syncScroll': 'Sync scroll',
+  'mpr.syncScrollTip': 'Scroll all orthogonal planes together (off by default)',
   'viewport.webgl': 'WebGL',
 };
 
@@ -807,11 +811,11 @@ const ru: Dict = {
   'compare.seriesHint': 'Клик — серия A; кнопка B — серия для сравнения',
   'compare.setB': 'Назначить серией сравнения (B)',
   'compare.sync': 'Синхронизация',
-  'compare.syncScroll': 'Срезы',
-  'compare.syncScrollTip': 'Связать позицию среза между A и B',
-  'compare.syncWl': 'W/L',
+  'compare.syncScroll': 'Синхр. прокрутка',
+  'compare.syncScrollTip': 'Листать серии A и B вместе (по умолчанию выкл.)',
+  'compare.syncWl': 'Синхр. W/L',
   'compare.syncWlTip': 'Общий window/level для A и B',
-  'compare.syncZoom': 'Масштаб',
+  'compare.syncZoom': 'Синхр. масштаб',
   'compare.syncZoomTip': 'Общий масштаб и сдвиг для A и B',
   'toolbar.window': 'W',
   'toolbar.windowTip': 'Ширина окна (Window Width)',
@@ -942,6 +946,8 @@ const ru: Dict = {
   'mpr.basisPatientTip': 'Анатомические плоскости в LPS (как RadiAnt)',
   'mpr.basisStackTip': 'Срезы по осям захвата (запасной режим)',
   'mpr.basisPatientUnavailable': 'Нет геометрии IOP/IPP — доступен только Стек',
+  'mpr.syncScroll': 'Синхр. прокрутка',
+  'mpr.syncScrollTip': 'Прокручивать все ортогональные плоскости вместе (по умолчанию выкл.)',
   'viewport.webgl': 'WebGL',
 };
 

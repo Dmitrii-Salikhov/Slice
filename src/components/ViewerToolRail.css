@@ -1,10 +1,10 @@
 .viewer-rail {
   display: flex;
   flex-direction: column;
-  gap: 6px;
-  width: 44px;
-  min-width: 44px;
-  padding: 6px 4px;
+  gap: 8px;
+  width: 55px;
+  min-width: 55px;
+  padding: 8px 5px;
   border-right: 1px solid var(--border);
   background: var(--bg-panel);
   overflow-y: auto;
@@ -15,8 +15,8 @@
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 2px;
-  padding-bottom: 6px;
+  gap: 3px;
+  padding-bottom: 8px;
   border-bottom: 1px solid var(--border);
 }
 
@@ -25,11 +25,25 @@
   padding-bottom: 0;
 }
 
+.viewer-rail .btn--tool {
+  width: 38px;
+  height: 35px;
+}
+
+.viewer-rail .btn--icon {
+  min-height: 35px;
+  font-size: 0.9rem;
+}
+
+.viewer-rail .btn__glyph {
+  font-size: 1.19rem;
+}
+
 .viewer-rail__wl {
   font-family: var(--font-mono);
-  font-size: 0.62rem;
+  font-size: 0.78rem;
   color: var(--text-muted);
-  gap: 4px;
+  gap: 5px;
 }
 
 .viewer-rail__wl label {
@@ -41,21 +55,21 @@
 }
 
 .viewer-rail__wl input {
-  width: 36px;
-  height: 22px;
+  width: 45px;
+  height: 28px;
   background: #0a0c10;
   border: 1px solid var(--border);
   border-radius: 3px;
   padding: 1px 2px;
   color: var(--text);
-  font-size: 0.62rem;
+  font-size: 0.78rem;
   text-align: center;
 }
 
 .viewer-rail__presets .btn--icon {
-  width: 34px;
-  padding: 2px 0;
-  font-size: 0.65rem;
+  width: 43px;
+  padding: 3px 0;
+  font-size: 0.81rem;
 }
 
 .viewer-rail__check {
@@ -63,23 +77,23 @@
   flex-direction: column;
   align-items: center;
   gap: 2px;
-  font-size: 0.58rem;
+  font-size: 0.72rem;
   color: var(--text-muted);
   text-align: center;
   user-select: none;
 }
 
 .viewer-rail__check input[type='number'] {
-  width: 32px;
-  height: 20px;
+  width: 40px;
+  height: 25px;
   background: #0a0c10;
   border: 1px solid var(--border);
   border-radius: 3px;
   color: var(--text);
-  font-size: 0.6rem;
+  font-size: 0.75rem;
   text-align: center;
 }
 
 .viewer-rail__checks {
-  gap: 4px;
+  gap: 5px;
 }

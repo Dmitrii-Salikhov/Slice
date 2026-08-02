@@ -90,6 +90,17 @@ describe('path allowlist', () => {
     expect(assertListable(media)).toBe(path.resolve(media));
   });
 
+  it('media claim allows Windows optical drive roots from scan', () => {
+    if (process.platform !== 'win32') return;
+    expect(isBroadFilesystemRoot('Z:\\')).toBe(true);
+    expect(() => allowRoot('Z:\\')).toThrow(/too broad/);
+    setPendingMediaRoots(['Z:\\']);
+    expect(claimMediaRoot('Z:\\')).toBe(path.resolve('Z:\\'));
+    expect(assertListable('Z:\\')).toBe(path.resolve('Z:\\'));
+    // Re-allow after claim (e.g. listDicomFiles) must not reject.
+    expect(() => allowRoot('Z:\\')).not.toThrow();
+  });
+
   it('containPath blocks traversal', () => {
     const root = path.join(os.tmpdir(), 'slice-contain');
     expect(containPath(root, ['IMG', '001.dcm'])).toBe(path.resolve(root, 'IMG', '001.dcm'));

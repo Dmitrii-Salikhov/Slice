@@ -35,7 +35,7 @@ export type SyncFlags = {
 };
 
 export const DEFAULT_SYNC_FLAGS: SyncFlags = {
-  scroll: true,
+  scroll: false,
   wl: true,
   zoom: true,
 };

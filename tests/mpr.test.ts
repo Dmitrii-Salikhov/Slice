@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   buildVolume,
+  estimateSliceSpacingMm,
   extractMprSlice,
   maxIndex,
   sampleVolume,
@@ -13,6 +14,7 @@ import {
 } from '../src/viewer/mpr';
 import { makeInstance, makeVolume } from './helpers';
 import type { DicomSeries } from '../src/dicom/types';
+import { physicalSize } from '../src/viewer/math';
 
 describe('mpr', () => {
   it('buildVolume stacks instances and derives spacing', () => {
@@ -42,6 +44,77 @@ describe('mpr', () => {
     expect(vol.spacing[0]).toBe(0.5);
     expect(vol.spacing[2]).toBeCloseTo(2);
     expect(sampleVolume(vol, 0, 0, 2)).toBe(2);
+  });
+
+  it('buildVolume prefers IPP spacing over Slice Thickness', () => {
+    const instances = [0, 1, 2, 3].map((z) =>
+      makeInstance({
+        rows: 2,
+        columns: 2,
+        fill: z,
+        imagePositionPatient: [0, 0, z * 1],
+        sliceThickness: 2,
+        spacingBetweenSlices: 1.5,
+        pixelSpacing: { row: 0.5, col: 0.5 },
+        sopInstanceUID: `s${z}`,
+      }),
+    );
+    const series: DicomSeries = {
+      seriesInstanceUID: 'se',
+      studyInstanceUID: 'st',
+      seriesDescription: 'CT',
+      modality: 'CT',
+      patientName: 'P',
+      patientId: '1',
+      studyDescription: 'S',
+      instances,
+    };
+    expect(estimateSliceSpacingMm(instances, 0.5)).toBeCloseTo(1);
+    const vol = buildVolume(series);
+    expect(vol.spacing[0]).toBe(0.5);
+    expect(vol.spacing[1]).toBe(0.5);
+    expect(vol.spacing[2]).toBeCloseTo(1);
+
+    const coronal = extractMprSlice(vol, 'coronal', 0, 'stack');
+    const { w, h } = physicalSize(
+      coronal.width,
+      coronal.height,
+      coronal.spacing.col,
+      coronal.spacing.row,
+    );
+    // Display height uses IPP step (1), not Slice Thickness (2).
+    expect(coronal.spacing.row).toBeCloseTo(1);
+    expect(h).toBeCloseTo(vol.dims[2] * 1);
+    expect(h).not.toBeCloseTo(vol.dims[2] * 2);
+    expect(w).toBeCloseTo(vol.dims[0] * 0.5);
+  });
+
+  it('estimateSliceSpacingMm falls back to SpacingBetweenSlices then thickness', () => {
+    const noIpp = [0, 1].map((z) =>
+      makeInstance({
+        rows: 2,
+        columns: 2,
+        fill: z,
+        imagePositionPatient: null,
+        sliceThickness: 3,
+        spacingBetweenSlices: 1.25,
+        sopInstanceUID: `n${z}`,
+      }),
+    );
+    expect(estimateSliceSpacingMm(noIpp, 0.5)).toBeCloseTo(1.25);
+
+    const thicknessOnly = [0, 1].map((z) =>
+      makeInstance({
+        rows: 2,
+        columns: 2,
+        fill: z,
+        imagePositionPatient: null,
+        sliceThickness: 2.5,
+        sopInstanceUID: `t${z}`,
+      }),
+    );
+    expect(estimateSliceSpacingMm(thicknessOnly, 0.5)).toBeCloseTo(2.5);
+    expect(estimateSliceSpacingMm([], 0.7)).toBeCloseTo(0.7);
   });
 
   it('rejects empty and inhomogeneous series', () => {
@@ -228,6 +301,18 @@ describe('mpr', () => {
       const next = cursorFromPlaneIndex(vol, plane, idx, cursor, 'patient');
       const back = planeIndexFromCursor(vol, plane, next, 'patient');
       expect(back).toBe(idx);
+    }
+  });
+
+  it('patient cursorFromPlaneIndex round-trips for every scroll index', () => {
+    const vol = makeVolume([8, 8, 12]);
+    const cursor = { x: 3.5, y: 3.5, z: 5.5 };
+    for (const plane of ['axial', 'coronal', 'sagittal'] as const) {
+      const max = maxIndex(vol, plane, 'patient');
+      for (let i = 0; i <= max; i++) {
+        const next = cursorFromPlaneIndex(vol, plane, i, cursor, 'patient');
+        expect(planeIndexFromCursor(vol, plane, next, 'patient')).toBe(i);
+      }
     }
   });
 

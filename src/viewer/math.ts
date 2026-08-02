@@ -92,6 +92,7 @@ export function clientToImage(
   flipV = false,
   spacingCol = 1,
   spacingRow = 1,
+  opts?: { allowOutside?: boolean },
 ): { x: number; y: number } | null {
   const rect = canvas.getBoundingClientRect();
   const dpr = canvas.width / Math.max(1, rect.width);
@@ -110,8 +111,10 @@ export function clientToImage(
   let iy = (cy - dy) / (mmScale * (spacingRow > 0 ? spacingRow : 1));
   if (flipH) ix = imageWidth - ix;
   if (flipV) iy = imageHeight - iy;
-  if (ix < -0.5 || iy < -0.5 || ix > imageWidth - 0.5 || iy > imageHeight - 0.5) {
-    return null;
+  if (!opts?.allowOutside) {
+    if (ix < -0.5 || iy < -0.5 || ix > imageWidth - 0.5 || iy > imageHeight - 0.5) {
+      return null;
+    }
   }
   return { x: ix, y: iy };
 }

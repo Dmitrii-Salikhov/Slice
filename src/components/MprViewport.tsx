@@ -92,7 +92,30 @@ export function MprViewport({
   const grayRef = useRef<Uint8ClampedArray | null>(null);
   const glFailedRef = useRef(false);
   const wheelRafRef = useRef<number | null>(null);
-  const pendingSliceRef = useRef<number | null>(null);
+  const pendingDeltaRef = useRef(0);
+  /** Last requested index while props may still lag behind (slow MPR re-renders). */
+  const desiredIndexRef = useRef(slice.index);
+  const awaitingSliceRef = useRef(false);
+  const maxRef = useRef(max);
+  maxRef.current = max;
+  const onSliceChangeRef = useRef(onSliceChange);
+  onSliceChangeRef.current = onSliceChange;
+
+  useEffect(() => {
+    if (slice.index === desiredIndexRef.current) {
+      awaitingSliceRef.current = false;
+      return;
+    }
+    // Ignore stale props while our scroll request is in flight; adopt external moves only.
+    if (!awaitingSliceRef.current) {
+      desiredIndexRef.current = slice.index;
+    }
+  }, [slice.index]);
+
+  useEffect(() => {
+    desiredIndexRef.current = Math.min(max, Math.max(0, desiredIndexRef.current));
+    awaitingSliceRef.current = false;
+  }, [max, plane]);
   const [draft, setDraft] = useState<DraftOverlay | null>(null);
   const [anglePoints, setAnglePoints] = useState<Array<{ x: number; y: number }>>([]);
   const [probe, setProbe] = useState<{
@@ -109,19 +132,54 @@ export function MprViewport({
 
   const meta = { sliceIndex: slice.index, mprPlane: plane };
 
+  // Keep latest frame inputs in refs so ResizeObserver never paints a stale slice
+  // (that was causing jumps back to old indices / other planes' frames).
+  const frameRef = useRef({
+    slice,
+    wl,
+    zoom,
+    cursor,
+    volume,
+    mprBasis,
+    plane,
+    measures,
+    draft,
+    probe,
+    selectedAnnotationId,
+    useWebGl,
+  });
+  frameRef.current = {
+    slice,
+    wl,
+    zoom,
+    cursor,
+    volume,
+    mprBasis,
+    plane,
+    measures,
+    draft,
+    probe,
+    selectedAnnotationId,
+    useWebGl,
+  };
+
   const paint = () => {
     const canvas = canvasRef.current;
     if (!canvas) return;
-    const { col: spacingCol, row: spacingRow } = slice.spacing;
+    const f = frameRef.current;
+    const s = f.slice;
+    // Guard against a mismatched slice object ever reaching the wrong pane.
+    if (s.plane !== f.plane) return;
+    const { col: spacingCol, row: spacingRow } = s.spacing;
 
-    if (useWebGl && glRef.current && !glFailedRef.current) {
+    if (f.useWebGl && glRef.current && !glFailedRef.current) {
       try {
         glRef.current.draw({
-          pixels: slice.pixels,
-          width: slice.width,
-          height: slice.height,
-          windowLevel: wl,
-          zoom,
+          pixels: s.pixels,
+          width: s.width,
+          height: s.height,
+          windowLevel: f.wl,
+          zoom: f.zoom,
           panX: 0,
           panY: 0,
           spacingCol,
@@ -134,17 +192,17 @@ export function MprViewport({
         onWebGlFailed?.();
       }
     } else {
-      if (!grayRef.current || grayRef.current.length !== slice.pixels.length) {
-        grayRef.current = new Uint8ClampedArray(slice.pixels.length);
+      if (!grayRef.current || grayRef.current.length !== s.pixels.length) {
+        grayRef.current = new Uint8ClampedArray(s.pixels.length);
       }
       renderSliceToCanvas(
         canvas,
         {
-          pixels: slice.pixels,
-          width: slice.width,
-          height: slice.height,
-          windowLevel: wl,
-          zoom,
+          pixels: s.pixels,
+          width: s.width,
+          height: s.height,
+          windowLevel: f.wl,
+          zoom: f.zoom,
           panX: 0,
           panY: 0,
           spacingCol,
@@ -154,30 +212,32 @@ export function MprViewport({
       );
     }
 
-    const overlay = overlayRef.current ?? (!useWebGl ? canvas : null);
+    const overlay = overlayRef.current ?? (!f.useWebGl ? canvas : null);
     if (overlay) {
       if (overlay !== canvas) {
         const ctx = overlay.getContext('2d');
         if (ctx) ctx.clearRect(0, 0, overlay.width, overlay.height);
       }
-      const ch = crosshairInMprPlane(volume, plane, cursor, mprBasis, slice);
+      const ch = crosshairInMprPlane(f.volume, f.plane, f.cursor, f.mprBasis, s);
       drawOverlays(overlay, {
-        width: slice.width,
-        height: slice.height,
-        zoom,
+        width: s.width,
+        height: s.height,
+        zoom: f.zoom,
         panX: 0,
         panY: 0,
         crosshair: ch,
-        spacing: slice.spacing,
-        measures,
-        draftMeasure: draft,
-        probe,
-        sliceIndex: slice.index,
-        mprPlane: plane,
-        selectedId: selectedAnnotationId,
+        spacing: s.spacing,
+        measures: f.measures,
+        draftMeasure: f.draft,
+        probe: f.probe,
+        sliceIndex: s.index,
+        mprPlane: f.plane,
+        selectedId: f.selectedAnnotationId,
       });
     }
   };
+  const paintRef = useRef(paint);
+  paintRef.current = paint;
 
   useEffect(() => {
     const wrap = wrapRef.current;
@@ -212,7 +272,7 @@ export function MprViewport({
         overlay.style.width = `${rect.width}px`;
         overlay.style.height = `${rect.height}px`;
       }
-      paint();
+      paintRef.current();
     };
 
     resize();
@@ -227,9 +287,21 @@ export function MprViewport({
   }, [useWebGl]);
 
   useEffect(() => {
-    paint();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [slice, wl, zoom, cursor, useWebGl, plane, volume, mprBasis, measures, draft, probe, selectedAnnotationId]);
+    paintRef.current();
+  }, [
+    slice,
+    wl,
+    zoom,
+    cursor,
+    useWebGl,
+    plane,
+    volume,
+    mprBasis,
+    measures,
+    draft,
+    probe,
+    selectedAnnotationId,
+  ]);
 
   useEffect(() => {
     setAnglePoints([]);
@@ -237,7 +309,7 @@ export function MprViewport({
     setProbe(null);
   }, [tool, slice.index, plane]);
 
-  const toImage = (clientX: number, clientY: number) => {
+  const toImage = (clientX: number, clientY: number, allowOutside = false) => {
     const canvas = canvasRef.current;
     if (!canvas) return null;
     return clientToImage(
@@ -253,6 +325,7 @@ export function MprViewport({
       false,
       slice.spacing.col,
       slice.spacing.row,
+      { allowOutside },
     );
   };
 
@@ -267,15 +340,20 @@ export function MprViewport({
     );
   };
 
-  const queueSliceChange = (index: number) => {
-    pendingSliceRef.current = index;
+  const queueSliceDelta = (delta: number) => {
+    if (delta === 0) return;
+    pendingDeltaRef.current += delta;
     if (wheelRafRef.current != null) return;
     wheelRafRef.current = window.requestAnimationFrame(() => {
       wheelRafRef.current = null;
-      if (pendingSliceRef.current != null) {
-        onSliceChange(pendingSliceRef.current);
-        pendingSliceRef.current = null;
-      }
+      const d = pendingDeltaRef.current;
+      pendingDeltaRef.current = 0;
+      if (d === 0) return;
+      const next = Math.min(maxRef.current, Math.max(0, desiredIndexRef.current + d));
+      if (next === desiredIndexRef.current && awaitingSliceRef.current) return;
+      desiredIndexRef.current = next;
+      awaitingSliceRef.current = true;
+      onSliceChangeRef.current(next);
     });
   };
 
@@ -292,8 +370,7 @@ export function MprViewport({
       onZoomChange(Math.min(8, Math.max(0.2, zoom * (e.deltaY > 0 ? 0.9 : 1.1))));
       return;
     }
-    const delta = e.deltaY > 0 ? 1 : -1;
-    queueSliceChange(Math.min(max, Math.max(0, slice.index + delta)));
+    queueSliceDelta(e.deltaY > 0 ? 1 : -1);
   };
 
   const onPointerDown = (e: React.PointerEvent) => {
@@ -304,7 +381,7 @@ export function MprViewport({
     (e.target as HTMLElement).setPointerCapture(e.pointerId);
 
     if (isNavTool(tool)) {
-      const img = toImage(e.clientX, e.clientY);
+      const img = toImage(e.clientX, e.clientY, true);
       if (img) {
         const hit = pickAnnotation(measures, img, annotationHitSlop(zoom), {
           sliceIndex: slice.index,
@@ -318,7 +395,7 @@ export function MprViewport({
     }
 
     if (tool === 'length' || tool === 'roi' || tool === 'arrow') {
-      const img = toImage(e.clientX, e.clientY);
+      const img = toImage(e.clientX, e.clientY, true);
       if (!img) return;
       setDraft({ kind: tool, x0: img.x, y0: img.y, x1: img.x, y1: img.y });
       dragRef.current = { x: e.clientX, y: e.clientY, active: true, mode: tool };
@@ -326,7 +403,7 @@ export function MprViewport({
     }
 
     if (tool === 'angle') {
-      const img = toImage(e.clientX, e.clientY);
+      const img = toImage(e.clientX, e.clientY, true);
       if (!img) return;
       const next = [...anglePoints, img];
       if (next.length === 1) {
@@ -400,7 +477,7 @@ export function MprViewport({
     const drag = dragRef.current;
 
     if (tool === 'angle' && anglePoints.length > 0) {
-      const img = toImage(e.clientX, e.clientY);
+      const img = toImage(e.clientX, e.clientY, true);
       if (!img) return;
       if (anglePoints.length === 1) {
         setDraft({
@@ -441,7 +518,7 @@ export function MprViewport({
       draft &&
       draft.kind === drag.mode
     ) {
-      const img = toImage(e.clientX, e.clientY);
+      const img = toImage(e.clientX, e.clientY, true);
       if (img) setDraft({ ...draft, x1: img.x, y1: img.y });
       return;
     }
@@ -464,7 +541,7 @@ export function MprViewport({
     } else if (!isMeasureTool(tool)) {
       const steps = Math.trunc(dy / 8);
       if (steps !== 0) {
-        queueSliceChange(Math.min(max, Math.max(0, slice.index + steps)));
+        queueSliceDelta(steps);
         drag.y = e.clientY;
       }
     }
@@ -554,7 +631,7 @@ export function MprViewport({
       onContextMenu={(e) => {
         e.preventDefault();
         e.stopPropagation();
-        const img = toImage(e.clientX, e.clientY);
+        const img = toImage(e.clientX, e.clientY, true);
         const hit = img
           ? pickAnnotation(measures, img, annotationHitSlop(zoom), visibility)
           : null;

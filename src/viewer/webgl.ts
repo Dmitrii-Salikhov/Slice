@@ -71,7 +71,7 @@ function compile(gl: WebGL2RenderingContext, type: number, src: string): WebGLSh
 }
 
 function toFloat32Texture(pixels: Float32Array | Int16Array): Float32Array {
-  if (pixels instanceof Float32Array) return pixels;
+  // Always copy — never upload a live view into volume/cache buffers.
   const out = new Float32Array(pixels.length);
   for (let i = 0; i < pixels.length; i++) out[i] = pixels[i];
   return out;

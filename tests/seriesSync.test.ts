@@ -31,6 +31,6 @@ describe('seriesSync', () => {
   });
 
   it('exposes default sync flags', () => {
-    expect(DEFAULT_SYNC_FLAGS).toEqual({ scroll: true, wl: true, zoom: true });
+    expect(DEFAULT_SYNC_FLAGS).toEqual({ scroll: false, wl: true, zoom: true });
   });
 });

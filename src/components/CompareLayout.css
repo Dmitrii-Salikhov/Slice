@@ -1,9 +1,35 @@
+.compare-root {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+}
+
+.compare__toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-panel);
+  flex-shrink: 0;
+}
+
+.compare__toolbar-hint {
+  margin: 0 0 0 auto;
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  color: var(--text-muted);
+}
+
 .compare {
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 2px;
   width: 100%;
-  height: 100%;
+  flex: 1;
   min-height: 0;
   background: var(--border);
 }

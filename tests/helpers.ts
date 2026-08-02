@@ -39,6 +39,7 @@ export function makeInstance(
     rescaleIntercept: overrides.rescaleIntercept ?? 0,
     pixelSpacing: overrides.pixelSpacing ?? { row: 1, col: 1 },
     sliceThickness: overrides.sliceThickness ?? 1,
+    spacingBetweenSlices: overrides.spacingBetweenSlices,
     imagePositionPatient:
       overrides.imagePositionPatient !== undefined
         ? overrides.imagePositionPatient

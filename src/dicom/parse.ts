@@ -160,6 +160,10 @@ function buildMetaInstances(
       rescaleIntercept: intercept,
       pixelSpacing,
       sliceThickness: firstNumber(dataSet.string?.('x00180050'), 0),
+      spacingBetweenSlices: (() => {
+        const v = firstNumber(dataSet.string?.('x00180088'), 0);
+        return v > 0 ? v : undefined;
+      })(),
       imagePositionPatient: ipp,
       imageOrientationPatient,
       instanceNumber: numberOfFrames > 1 ? instanceNumber * 1000 + frameIndex : instanceNumber,

@@ -37,6 +37,8 @@ export type DicomInstance = {
   rescaleIntercept: number;
   pixelSpacing: PixelSpacing;
   sliceThickness: number;
+  /** Spacing Between Slices (0018,0088) when present — not the same as thickness. */
+  spacingBetweenSlices?: number;
   imagePositionPatient: [number, number, number] | null;
   imageOrientationPatient: ImageOrientation | null;
   instanceNumber: number;

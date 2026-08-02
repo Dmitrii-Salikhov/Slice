@@ -266,7 +266,7 @@ export function Viewport({
     return { x: ix, y: iy, value };
   };
 
-  const toImage = (clientX: number, clientY: number) => {
+  const toImage = (clientX: number, clientY: number, allowOutside = false) => {
     if (!instance || !canvasRef.current) return null;
     return clientToImage(
       clientX,
@@ -281,6 +281,7 @@ export function Viewport({
       flipV,
       instance.pixelSpacing.col,
       instance.pixelSpacing.row,
+      { allowOutside },
     );
   };
 
@@ -319,7 +320,7 @@ export function Viewport({
     (e.target as HTMLElement).setPointerCapture(e.pointerId);
 
     if (isNavTool(tool)) {
-      const img = toImage(e.clientX, e.clientY);
+      const img = toImage(e.clientX, e.clientY, true);
       if (img) {
         const hit = pickAnnotation(measures, img, annotationHitSlop(zoom), {
           sliceIndex,
@@ -332,14 +333,14 @@ export function Viewport({
     }
 
     if (tool === 'length' || tool === 'roi' || tool === 'arrow') {
-      const img = toImage(e.clientX, e.clientY);
+      const img = toImage(e.clientX, e.clientY, true);
       if (!img) return;
       startDragTool(tool, e, img);
       return;
     }
 
     if (tool === 'angle') {
-      const img = toImage(e.clientX, e.clientY);
+      const img = toImage(e.clientX, e.clientY, true);
       if (!img) return;
       const next = [...anglePoints, img];
       if (next.length === 1) {
@@ -411,7 +412,7 @@ export function Viewport({
     if (!instance || !canvasRef.current) return;
 
     if (tool === 'angle' && anglePoints.length > 0) {
-      const img = toImage(e.clientX, e.clientY);
+      const img = toImage(e.clientX, e.clientY, true);
       if (!img) return;
       if (anglePoints.length === 1) {
         setDraft({
@@ -450,7 +451,7 @@ export function Viewport({
       draft &&
       draft.kind === drag.mode
     ) {
-      const img = toImage(e.clientX, e.clientY);
+      const img = toImage(e.clientX, e.clientY, true);
       if (img) setDraft({ ...draft, x1: img.x, y1: img.y });
       return;
     }
@@ -581,7 +582,7 @@ export function Viewport({
       onContextMenu={(e) => {
         e.preventDefault();
         e.stopPropagation();
-        const img = toImage(e.clientX, e.clientY);
+        const img = toImage(e.clientX, e.clientY, true);
         const hit = img
           ? pickAnnotation(measures, img, annotationHitSlop(zoom), { sliceIndex })
           : null;

@@ -1,4 +1,11 @@
-import type { DicomSeries, VolumeData, WindowLevel, MprPlane, MprBasis } from '../dicom/types';
+import type {
+  DicomInstance,
+  DicomSeries,
+  VolumeData,
+  WindowLevel,
+  MprPlane,
+  MprBasis,
+} from '../dicom/types';
 import { getPixelBuffer } from '../dicom/parse';
 import { buildVolumeGeometry, patientPlaneExtents, patientToVoxel, voxelToPatient } from './volumeGeometry';
 import type { VolumeCursor } from './crosshair';
@@ -13,6 +20,39 @@ function finishVolume(
 ): VolumeData {
   const geometry = buildVolumeGeometry(series.instances, spacing);
   return { data, dims, spacing, windowLevel, geometry };
+}
+
+/**
+ * Voxel Z spacing for the volume grid (mm between slice centers).
+ * Prefer median IPP delta; Slice Thickness is reconstruction thickness, not step.
+ */
+export function estimateSliceSpacingMm(
+  instances: DicomInstance[],
+  fallbackRowSpacing = 1,
+): number {
+  const deltas: number[] = [];
+  for (let i = 1; i < instances.length; i++) {
+    const a = instances[i - 1].imagePositionPatient;
+    const b = instances[i].imagePositionPatient;
+    if (!a || !b) continue;
+    const d = Math.hypot(b[0] - a[0], b[1] - a[1], b[2] - a[2]);
+    if (d > 1e-6) deltas.push(d);
+  }
+  if (deltas.length > 0) {
+    deltas.sort((x, y) => x - y);
+    return deltas[Math.floor(deltas.length / 2)]!;
+  }
+
+  for (const inst of instances) {
+    const sbs = inst.spacingBetweenSlices;
+    if (sbs != null && sbs > 0) return sbs;
+  }
+
+  for (const inst of instances) {
+    if (inst.sliceThickness > 0) return inst.sliceThickness;
+  }
+
+  return fallbackRowSpacing > 0 ? fallbackRowSpacing : 1;
 }
 
 /**
@@ -58,15 +98,7 @@ export function buildVolume(series: DicomSeries): VolumeData {
 
   const sx = first.pixelSpacing.col;
   const sy = first.pixelSpacing.row;
-  let sz = first.sliceThickness || 0;
-  if ((!sz || sz <= 0) && instances.length > 1) {
-    const a = instances[0].imagePositionPatient;
-    const b = instances[1].imagePositionPatient;
-    if (a && b) {
-      sz = Math.hypot(b[0] - a[0], b[1] - a[1], b[2] - a[2]);
-    }
-  }
-  if (!sz || sz <= 0) sz = sy;
+  const sz = estimateSliceSpacingMm(instances, sy);
 
   return finishVolume(
     series,
@@ -151,15 +183,7 @@ export async function buildVolumeProgressive(
 
   const sx = first.pixelSpacing.col;
   const sy = first.pixelSpacing.row;
-  let sz = first.sliceThickness || 0;
-  if ((!sz || sz <= 0) && instances.length > 1) {
-    const a = instances[0].imagePositionPatient;
-    const b = instances[1].imagePositionPatient;
-    if (a && b) {
-      sz = Math.hypot(b[0] - a[0], b[1] - a[1], b[2] - a[2]);
-    }
-  }
-  if (!sz || sz <= 0) sz = sy;
+  const sz = estimateSliceSpacingMm(instances, sy);
 
   return finishVolume(
     series,
@@ -199,7 +223,7 @@ export type MprSlice = {
 };
 
 const sliceCaches = new WeakMap<VolumeData, Map<string, MprSlice>>();
-const MAX_CACHED_SLICES = 12;
+const MAX_CACHED_SLICES = 48;
 
 function sliceCacheKey(basis: MprBasis, plane: MprPlane, index: number): string {
   return `${basis}:${plane}:${index}`;
@@ -215,12 +239,19 @@ function rememberSlice(
     cache = new Map();
     sliceCaches.set(volume, cache);
   }
-  cache.set(sliceCacheKey(basis, slice.plane, slice.index), slice);
+  const key = sliceCacheKey(basis, slice.plane, slice.index);
+  cache.set(key, slice);
   while (cache.size > MAX_CACHED_SLICES) {
     const oldest = cache.keys().next().value;
     if (oldest) cache.delete(oldest);
   }
   return slice;
+}
+
+function copyPlanePixels(
+  src: Float32Array | Int16Array,
+): Float32Array | Int16Array {
+  return src instanceof Int16Array ? new Int16Array(src) : new Float32Array(src);
 }
 
 function allocPlane(size: number, data: Float32Array | Int16Array): Float32Array | Int16Array {
@@ -268,7 +299,8 @@ function extractStackMprSlice(
   if (plane === 'axial') {
     const z = Math.min(nz - 1, Math.max(0, index));
     const start = z * ny * nx;
-    const pixels = data.subarray(start, start + nx * ny);
+    // Copy — never return a live view into volume.data (shared buffer races with cache/GPU).
+    const pixels = copyPlanePixels(data.subarray(start, start + nx * ny));
     return {
       pixels,
       width: nx,
@@ -394,13 +426,16 @@ export function extractMprSlice(
   const cache = sliceCaches.get(volume);
   const key = sliceCacheKey(resolved, plane, index);
   const hit = cache?.get(key);
-  if (hit) return hit;
+  if (hit && hit.plane === plane && hit.index === index) return hit;
 
   let slice: MprSlice;
   if (resolved === 'patient') {
     slice = extractPatientMprSlice(volume, plane, index) ?? extractStackMprSlice(volume, plane, index);
   } else {
     slice = extractStackMprSlice(volume, plane, index);
+  }
+  if (slice.plane !== plane) {
+    slice = { ...slice, plane };
   }
   return rememberSlice(volume, resolved, slice);
 }
@@ -456,7 +491,8 @@ export function planeIndexFromCursor(
     rel[2] * extents.frame.normal[2];
   const t =
     nCount === 1 ? 0 : (nPos - extents.nMin) / (extents.nMax - extents.nMin || 1);
-  return Math.min(nCount - 1, Math.max(0, Math.round(t * nCount - 0.5)));
+  // Bin i is centered at (i+0.5)/nCount; floor is stable under small patient↔voxel noise.
+  return Math.min(nCount - 1, Math.max(0, Math.floor(t * nCount)));
 }
 
 /** Move cursor so the given plane shows `index` (keeps the other patient axes). */

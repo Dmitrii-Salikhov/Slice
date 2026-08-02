@@ -75,6 +75,8 @@ function pathDenied(message) {
 function allowRoot(dir) {
   if (!dir) return;
   const n = normalize(dir);
+  // Already claimed (e.g. optical drive root via media:open) — keep as-is.
+  if (rootSetHas(allowedRoots, n)) return;
   if (isBroadFilesystemRoot(n)) {
     throw pathDenied('Path too broad to allow');
   }
@@ -124,6 +126,19 @@ function isSessionTemp(filePath) {
   return false;
 }
 
+function pathKey(filePath) {
+  const n = normalize(filePath);
+  return process.platform === 'win32' ? n.toLowerCase() : n;
+}
+
+function rootSetHas(set, filePath) {
+  const key = pathKey(filePath);
+  for (const root of set) {
+    if (pathKey(root) === key) return true;
+  }
+  return false;
+}
+
 function setPendingMediaRoots(paths) {
   pendingMediaRoots.clear();
   for (const p of paths || []) {
@@ -136,14 +151,15 @@ function setPendingMediaRoots(paths) {
   }
 }
 
-/** Claim a media path from the last media:list scan into the session allowlist. */
+/**
+ * Claim a media path from the last media:list scan into the session allowlist.
+ * Windows optical/removable volumes are drive roots (D:\); that is intentional —
+ * media:list only returns DriveType 2/5, so the broad-root guard does not apply here.
+ */
 function claimMediaRoot(dirPath) {
   const n = normalize(dirPath);
-  if (!pendingMediaRoots.has(n)) {
+  if (!rootSetHas(pendingMediaRoots, n)) {
     throw pathDenied('Media path not from last scan');
-  }
-  if (isBroadFilesystemRoot(n)) {
-    throw pathDenied('Path too broad to allow');
   }
   allowedRoots.add(n);
   return n;

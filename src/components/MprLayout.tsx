@@ -1,4 +1,4 @@
-import { useDeferredValue, useMemo } from 'react';
+import { useDeferredValue, useEffect, useMemo, useRef, useState } from 'react';
 import type {
   Annotation,
   MprBasis,
@@ -33,6 +33,8 @@ import './MprLayout.css';
 import './Viewport.css';
 
 export type MprLayoutMode = 'quad' | 'single';
+
+type PlaneIndices = Record<MprPlane, number>;
 
 type Props = {
   volume: VolumeData;
@@ -82,6 +84,27 @@ function downscaleObliquePlane(plane: ObliquePlane): ObliquePlane {
   };
 }
 
+function indicesFromCursor(
+  volume: VolumeData,
+  cursor: VolumeCursor,
+  basis: MprBasis,
+): PlaneIndices {
+  return {
+    axial: planeIndexFromCursor(volume, 'axial', cursor, basis),
+    coronal: planeIndexFromCursor(volume, 'coronal', cursor, basis),
+    sagittal: planeIndexFromCursor(volume, 'sagittal', cursor, basis),
+  };
+}
+
+function clampPlaneIndex(
+  volume: VolumeData,
+  plane: MprPlane,
+  index: number,
+  basis: MprBasis,
+) {
+  return Math.min(maxIndex(volume, plane, basis), Math.max(0, index));
+}
+
 export function MprLayout({
   volume,
   cursor,
@@ -111,27 +134,37 @@ export function MprLayout({
   onPlaneFocus,
 }: Props) {
   const { t } = useLocale();
-  const deferredYaw = useDeferredValue(yaw);
-  const deferredPitch = useDeferredValue(pitch);
-  const deferredCursor = useDeferredValue(cursor);
+  const [syncScroll, setSyncScroll] = useState(false);
   const basis = resolveMprBasis(volume, mprBasis);
   const canPatient = hasPatientGeometry(volume);
 
-  const axialIndex = planeIndexFromCursor(volume, 'axial', cursor, basis);
-  const coronalIndex = planeIndexFromCursor(volume, 'coronal', cursor, basis);
-  const sagittalIndex = planeIndexFromCursor(volume, 'sagittal', cursor, basis);
+  // Display indices are explicit — never re-derived after scroll (avoids patient↔voxel jumps).
+  const [planeIndices, setPlaneIndices] = useState<PlaneIndices>(() =>
+    indicesFromCursor(volume, cursor, basis),
+  );
+  const planeIndicesRef = useRef(planeIndices);
+  planeIndicesRef.current = planeIndices;
+  const cursorRef = useRef(cursor);
+
+  useEffect(() => {
+    setPlaneIndices(indicesFromCursor(volume, cursorRef.current, basis));
+  }, [volume, basis]);
+
+  useEffect(() => {
+    cursorRef.current = cursor;
+  }, [cursor]);
 
   const axialSlice = useMemo(
-    () => extractMprSlice(volume, 'axial', axialIndex, basis),
-    [volume, axialIndex, basis],
+    () => extractMprSlice(volume, 'axial', planeIndices.axial, basis),
+    [volume, planeIndices.axial, basis],
   );
   const coronalSlice = useMemo(
-    () => extractMprSlice(volume, 'coronal', coronalIndex, basis),
-    [volume, coronalIndex, basis],
+    () => extractMprSlice(volume, 'coronal', planeIndices.coronal, basis),
+    [volume, planeIndices.coronal, basis],
   );
   const sagittalSlice = useMemo(
-    () => extractMprSlice(volume, 'sagittal', sagittalIndex, basis),
-    [volume, sagittalIndex, basis],
+    () => extractMprSlice(volume, 'sagittal', planeIndices.sagittal, basis),
+    [volume, planeIndices.sagittal, basis],
   );
 
   const slices = useMemo(
@@ -142,6 +175,10 @@ export function MprLayout({
     }),
     [axialSlice, coronalSlice, sagittalSlice],
   );
+
+  const deferredYaw = useDeferredValue(yaw);
+  const deferredPitch = useDeferredValue(pitch);
+  const deferredCursor = useDeferredValue(cursor);
 
   const oblique = useMemo(() => {
     const base = setObliqueCenter(defaultOblique(volume), deferredCursor);
@@ -155,21 +192,82 @@ export function MprLayout({
 
   const hu = probeVolume(volume, cursor);
 
+  const publishCursor = (next: VolumeCursor) => {
+    cursorRef.current = next;
+    onCursorChange(next);
+  };
+
+  /** Crosshair / oblique: move 3D cursor; keep each plane's slice index stable except the focused one. */
+  const handleCursorChange = (c: VolumeCursor, focusedPlane?: MprPlane) => {
+    const next = clampCursor(c, volume);
+    const derived = indicesFromCursor(volume, next, basis);
+    setPlaneIndices((prev) => {
+      // Crosshair in one pane should not replace other panes' scroll positions
+      // with unstable patient↔voxel round-trips (that looked like "coronal in axial").
+      const merged: PlaneIndices = focusedPlane
+        ? {
+            axial: focusedPlane === 'axial' ? derived.axial : prev.axial,
+            coronal: focusedPlane === 'coronal' ? derived.coronal : prev.coronal,
+            sagittal: focusedPlane === 'sagittal' ? derived.sagittal : prev.sagittal,
+          }
+        : derived;
+      planeIndicesRef.current = merged;
+      return merged;
+    });
+    publishCursor(next);
+  };
+
   const setPlaneIndex = (plane: MprPlane, index: number) => {
-    onCursorChange(
-      clampCursor(cursorFromPlaneIndex(volume, plane, index, cursor, basis), volume),
+    const zi = clampPlaneIndex(volume, plane, index, basis);
+
+    if (!syncScroll || layoutMode !== 'quad') {
+      const nextCursor = clampCursor(
+        cursorFromPlaneIndex(volume, plane, zi, cursorRef.current, basis),
+        volume,
+      );
+      // Only the scrolled plane changes slice; others stay put (no derived jump).
+      setPlaneIndices((prev) => {
+        const next = { ...prev, [plane]: zi };
+        planeIndicesRef.current = next;
+        return next;
+      });
+      publishCursor(nextCursor);
+      return;
+    }
+
+    const prev = planeIndicesRef.current;
+    const delta = zi - prev[plane];
+    if (delta === 0) return;
+    const nextIndices: PlaneIndices = {
+      axial: clampPlaneIndex(volume, 'axial', prev.axial + delta, basis),
+      coronal: clampPlaneIndex(volume, 'coronal', prev.coronal + delta, basis),
+      sagittal: clampPlaneIndex(volume, 'sagittal', prev.sagittal + delta, basis),
+    };
+    planeIndicesRef.current = nextIndices;
+    setPlaneIndices(nextIndices);
+    const c = cursorRef.current;
+    publishCursor(
+      clampCursor(
+        {
+          x: c.x + delta,
+          y: c.y + delta,
+          z: c.z + delta,
+        },
+        volume,
+      ),
     );
   };
 
   const renderViewport = (plane: MprPlane, titleKey: MessageKey) => (
     <MprViewport
+      key={plane}
       label={t(titleKey)}
       plane={plane}
       slice={slices[plane]}
       max={maxIndex(volume, plane, basis)}
       volume={volume}
       cursor={cursor}
-      onCursorChange={onCursorChange}
+      onCursorChange={(c) => handleCursorChange(c, plane)}
       wl={wl}
       tool={tool}
       zoom={zoom}
@@ -232,6 +330,18 @@ export function MprLayout({
           </button>
         </div>
 
+        {layoutMode === 'quad' && (
+          <button
+            type="button"
+            className={`btn btn--ghost btn--sm${syncScroll ? ' btn--active' : ''}`}
+            onClick={() => setSyncScroll((v) => !v)}
+            title={t('mpr.syncScrollTip')}
+            aria-pressed={syncScroll}
+          >
+            {t('mpr.syncScroll')}
+          </button>
+        )}
+
         {layoutMode === 'single' && (
           <div className="mpr__plane-toggle" role="group" aria-label={t('mpr.plane')}>
             {PLANES.map(({ plane, titleKey }) => (
@@ -284,7 +394,7 @@ export function MprLayout({
                 onZoomChange={onZoomChange}
                 onScroll={(d) => {
                   const next = offsetOrigin(oblique, d);
-                  onCursorChange({
+                  handleCursorChange({
                     x: next.origin[0],
                     y: next.origin[1],
                     z: next.origin[2],
