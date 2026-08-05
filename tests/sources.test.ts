@@ -12,7 +12,7 @@ import { createRequire } from 'node:module';
 import { buildMinimalDicom } from './writeMinimalDicom';
 
 const require = createRequire(import.meta.url);
-const { extractZipArchive, zipNeedsPassword, isZipPath } = require('../electron/zip.cjs');
+const { extractZipArchive, zipNeedsPassword, isZipPath, looksLikeDicomName } = require('../electron/zip.cjs');
 const {
   hasDicomContent,
   classifyFromDiskutil,
@@ -26,6 +26,13 @@ describe('zip helpers', () => {
     expect(isZipPath('/a/b/archive.zip')).toBe(true);
     expect(isZipPath('/a/b/c.dcm')).toBe(false);
     expect(isZipPath('/a/b/zip')).toBe(false);
+  });
+
+  it('accepts Siemens .ima as DICOM-like names', () => {
+    expect(looksLikeDicomName('MR0001.IMA')).toBe(true);
+    expect(looksLikeDicomName('series/img.ima')).toBe(true);
+    expect(looksLikeDicomName('img.dcm')).toBe(true);
+    expect(looksLikeDicomName('readme.txt')).toBe(false);
   });
 
   it('extracts plain zip with dicom-like entries and nested folders', async () => {

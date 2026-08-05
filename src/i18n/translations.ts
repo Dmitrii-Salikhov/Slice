@@ -80,6 +80,17 @@ export type MessageKey =
   | 'error.restartRequired'
   | 'error.noFiles'
   | 'error.noParse'
+  | 'error.wrongFormat'
+  | 'error.unsupportedTransfer'
+  | 'error.notImageDicom'
+  | 'error.decodeFailed'
+  | 'error.mprFailed'
+  | 'error.webglFallback'
+  | 'error.accessDenied'
+  | 'error.fileNotFound'
+  | 'error.annotationsInvalid'
+  | 'error.pacsFailed'
+  | 'error.unknown'
   | 'error.loadCancelled'
   | 'error.dropPaths'
   | 'error.zipPassword'
@@ -313,6 +324,8 @@ export type MessageKey =
   | 'mpr.basisPatientUnavailable'
   | 'mpr.syncScroll'
   | 'mpr.syncScrollTip'
+  | 'mpr.fastScroll'
+  | 'mpr.fastScrollTip'
   | 'viewport.webgl';
 
 type Dict = Record<MessageKey, string>;
@@ -396,8 +409,19 @@ const en: Dict = {
   'tags.colValue': 'Value',
   'error.noApi': 'Electron API unavailable — run via npm run dev',
   'error.restartRequired': 'App needs a full restart (npm run dev) — main process is out of date',
-  'error.noFiles': 'No DICOM-like files found',
-  'error.noParse': 'Could not parse any DICOM files',
+  'error.noFiles': 'No DICOM files found',
+  'error.noParse': 'Could not read any DICOM files',
+  'error.wrongFormat': 'Files are not in DICOM format',
+  'error.unsupportedTransfer': 'Unsupported DICOM compression / transfer syntax',
+  'error.notImageDicom': 'DICOM file has no image data (not a viewable image)',
+  'error.decodeFailed': 'Could not decode image pixels',
+  'error.mprFailed': 'Could not build MPR volume for this series',
+  'error.webglFallback': 'WebGL unavailable — using Canvas renderer',
+  'error.accessDenied': 'Access denied — path is not available',
+  'error.fileNotFound': 'File or folder not found',
+  'error.annotationsInvalid': 'Invalid annotations file',
+  'error.pacsFailed': 'PACS operation failed',
+  'error.unknown': 'Unknown error',
   'error.loadCancelled': 'Load cancelled',
   'error.dropPaths': 'Could not read dropped files',
   'error.zipPassword': 'This ZIP is encrypted — enter the password',
@@ -631,6 +655,8 @@ const en: Dict = {
   'mpr.basisPatientUnavailable': 'Patient geometry missing (IOP/IPP) — use Stack',
   'mpr.syncScroll': 'Sync scroll',
   'mpr.syncScrollTip': 'Scroll all orthogonal planes together (off by default)',
+  'mpr.fastScroll': 'Fast scroll',
+  'mpr.fastScrollTip': 'While scrolling: low quality; when stopped: full quality',
   'viewport.webgl': 'WebGL',
 };
 
@@ -713,8 +739,19 @@ const ru: Dict = {
   'tags.colValue': 'Значение',
   'error.noApi': 'API Electron недоступен — запустите npm run dev',
   'error.restartRequired': 'Нужен полный перезапуск (npm run dev) — main-процесс устарел',
-  'error.noFiles': 'DICOM-файлы не найдены',
-  'error.noParse': 'Не удалось разобрать DICOM-файлы',
+  'error.noFiles': 'Не найдено DICOM файлов',
+  'error.noParse': 'Не удалось прочитать DICOM файлы',
+  'error.wrongFormat': 'Файлы не в формате DICOM',
+  'error.unsupportedTransfer': 'Неподдерживаемое сжатие / transfer syntax DICOM',
+  'error.notImageDicom': 'DICOM без изображения (нельзя показать)',
+  'error.decodeFailed': 'Не удалось декодировать пиксели изображения',
+  'error.mprFailed': 'Не удалось построить MPR для этой серии',
+  'error.webglFallback': 'WebGL недоступен — используется Canvas',
+  'error.accessDenied': 'Нет доступа к пути',
+  'error.fileNotFound': 'Файл или папка не найдены',
+  'error.annotationsInvalid': 'Некорректный файл аннотаций',
+  'error.pacsFailed': 'Ошибка операции PACS',
+  'error.unknown': 'Неизвестная ошибка',
   'error.loadCancelled': 'Загрузка отменена',
   'error.dropPaths': 'Не удалось прочитать перетащенные файлы',
   'error.zipPassword': 'ZIP зашифрован — введите пароль',
@@ -948,6 +985,8 @@ const ru: Dict = {
   'mpr.basisPatientUnavailable': 'Нет геометрии IOP/IPP — доступен только Стек',
   'mpr.syncScroll': 'Синхр. прокрутка',
   'mpr.syncScrollTip': 'Прокручивать все ортогональные плоскости вместе (по умолчанию выкл.)',
+  'mpr.fastScroll': 'Быстрая прокрутка',
+  'mpr.fastScrollTip': 'При листании — низкое качество; после остановки — полное',
   'viewport.webgl': 'WebGL',
 };
 

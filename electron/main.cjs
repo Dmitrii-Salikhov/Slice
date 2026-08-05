@@ -263,7 +263,13 @@ async function findDicomdir(dir) {
 function looksLikeDicomFile(filePath) {
   const base = path.basename(filePath).toLowerCase();
   if (base === 'dicomdir') return false;
-  return base.endsWith('.dcm') || base.endsWith('.dicom') || !base.includes('.');
+  // .ima = Siemens DICOM extension (same Part 10 payload as .dcm)
+  return (
+    base.endsWith('.dcm') ||
+    base.endsWith('.dicom') ||
+    base.endsWith('.ima') ||
+    !base.includes('.')
+  );
 }
 
 async function collectDicomFiles(dir) {
@@ -333,7 +339,7 @@ ipcMain.handle('dialog:openStudy', async () => {
       : ['openDirectory'],
     filters: isMac
       ? [
-          { name: 'DICOM / ZIP', extensions: ['dcm', 'dicom', 'zip'] },
+          { name: 'DICOM / ZIP', extensions: ['dcm', 'dicom', 'ima', 'zip'] },
           { name: 'ZIP archives', extensions: ['zip'] },
           { name: 'All files', extensions: ['*'] },
         ]
@@ -371,7 +377,7 @@ ipcMain.handle('dialog:openStudyFiles', async () => {
     title: 'Load study files / ZIP',
     properties: ['openFile', 'multiSelections'],
     filters: [
-      { name: 'DICOM / ZIP', extensions: ['dcm', 'dicom', 'zip'] },
+      { name: 'DICOM / ZIP', extensions: ['dcm', 'dicom', 'ima', 'zip'] },
       { name: 'ZIP archives', extensions: ['zip'] },
       { name: 'All files', extensions: ['*'] },
     ],
@@ -427,7 +433,7 @@ ipcMain.handle('dialog:openDicomFiles', async () => {
     properties: ['openFile', 'multiSelections'],
     title: 'Open DICOM files',
     filters: [
-      { name: 'DICOM', extensions: ['dcm', 'dicom'] },
+      { name: 'DICOM', extensions: ['dcm', 'dicom', 'ima'] },
       { name: 'All files', extensions: ['*'] },
     ],
   });

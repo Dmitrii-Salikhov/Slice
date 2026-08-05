@@ -71,7 +71,7 @@ function compile(gl: WebGL2RenderingContext, type: number, src: string): WebGLSh
 }
 
 function toFloat32Texture(pixels: Float32Array | Int16Array): Float32Array {
-  // Always copy — never upload a live view into volume/cache buffers.
+  if (pixels instanceof Float32Array) return pixels;
   const out = new Float32Array(pixels.length);
   for (let i = 0; i < pixels.length; i++) out[i] = pixels[i];
   return out;
@@ -134,8 +134,8 @@ export function createWebGlSliceRenderer(canvas: HTMLCanvasElement): WebGlSliceR
 
   const tex = gl.createTexture();
   gl.bindTexture(gl.TEXTURE_2D, tex);
-  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
-  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
   gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
   gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
 

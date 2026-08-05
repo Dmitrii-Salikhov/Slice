@@ -5,6 +5,8 @@ import { sharedDecodePool } from './decodePool';
 export type PixelCacheOptions = {
   /** Max decoded slices retained (default 192). */
   maxEntries?: number;
+  /** Soft byte budget; evicts LRU until under limit (default 256 MiB). */
+  maxBytes?: number;
 };
 
 type CacheEntry = {
@@ -29,16 +31,23 @@ function estimateBytes(instance: DicomInstance): number {
  */
 export class PixelCache {
   private readonly maxEntries: number;
+  private readonly maxBytes: number;
   private readonly order: string[] = [];
   private readonly map = new Map<string, CacheEntry>();
   private readonly inflight = new Map<string, Promise<DicomInstance>>();
+  private totalBytes = 0;
 
   constructor(options?: PixelCacheOptions) {
     this.maxEntries = Math.max(1, options?.maxEntries ?? 192);
+    this.maxBytes = Math.max(1, options?.maxBytes ?? 256 * 1024 * 1024);
   }
 
   get size(): number {
     return this.map.size;
+  }
+
+  get bytes(): number {
+    return this.totalBytes;
   }
 
   peek(instance: DicomInstance): boolean {
@@ -56,18 +65,25 @@ export class PixelCache {
     this.order.push(key);
   }
 
+  private dropEntry(key: string) {
+    const entry = this.map.get(key);
+    if (!entry) return;
+    this.map.delete(key);
+    this.totalBytes = Math.max(0, this.totalBytes - entry.bytes);
+    entry.instance.pixels = undefined;
+    entry.instance.pixelsInt16 = undefined;
+    entry.instance.colorRgba = undefined;
+    entry.instance.pixelStatus = 'meta';
+  }
+
   private evictIfNeeded() {
-    while (this.map.size > this.maxEntries && this.order.length > 0) {
+    while (
+      (this.map.size > this.maxEntries || this.totalBytes > this.maxBytes) &&
+      this.order.length > 0
+    ) {
       const oldest = this.order.shift();
       if (!oldest) break;
-      const entry = this.map.get(oldest);
-      this.map.delete(oldest);
-      if (entry) {
-        entry.instance.pixels = undefined;
-        entry.instance.pixelsInt16 = undefined;
-        entry.instance.colorRgba = undefined;
-        entry.instance.pixelStatus = 'meta';
-      }
+      this.dropEntry(oldest);
     }
   }
 
@@ -77,7 +93,9 @@ export class PixelCache {
       this.touch(key);
       return;
     }
-    this.map.set(key, { key, instance, bytes: estimateBytes(instance) });
+    const bytes = estimateBytes(instance);
+    this.map.set(key, { key, instance, bytes });
+    this.totalBytes += bytes;
     this.touch(key);
     this.evictIfNeeded();
   }
@@ -152,19 +170,19 @@ export class PixelCache {
   }
 
   clear() {
-    for (const entry of this.map.values()) {
-      entry.instance.pixels = undefined;
-      entry.instance.pixelsInt16 = undefined;
-      entry.instance.colorRgba = undefined;
-      entry.instance.pixelStatus = 'meta';
+    for (const key of [...this.map.keys()]) {
+      this.dropEntry(key);
     }
-    this.map.clear();
     this.order.length = 0;
     this.inflight.clear();
+    this.totalBytes = 0;
   }
 }
 
-export const sharedPixelCache = new PixelCache({ maxEntries: 192 });
+export const sharedPixelCache = new PixelCache({
+  maxEntries: 192,
+  maxBytes: 256 * 1024 * 1024,
+});
 
 export function pixelCacheKey(instance: DicomInstance): string {
   return cacheKey(instance);

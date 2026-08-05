@@ -29,7 +29,7 @@ async function hasDicomContent(root) {
     for (const e of entries) {
       if (!e.isFile()) continue;
       const base = e.name.toLowerCase();
-      if (base.endsWith('.dcm') || base.endsWith('.dicom')) return true;
+      if (base.endsWith('.dcm') || base.endsWith('.dicom') || base.endsWith('.ima')) return true;
       files += 1;
       if (files > 40) break;
     }

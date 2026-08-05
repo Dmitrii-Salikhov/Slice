@@ -223,15 +223,56 @@ export type MprSlice = {
 };
 
 const sliceCaches = new WeakMap<VolumeData, Map<string, MprSlice>>();
-const MAX_CACHED_SLICES = 48;
+/** Full-quality patient MPR raster cap (interactive scroll uses a lower cap). */
+const MAX_PATIENT_MPR_DIM_FULL = 640;
+const MAX_PATIENT_MPR_DIM_INTERACTIVE = 256;
+/** Soft budget for retained MPR plane rasters (excludes stack axial views into volume.data). */
+const MAX_SLICE_CACHE_BYTES = 24 * 1024 * 1024;
 
-function sliceCacheKey(basis: MprBasis, plane: MprPlane, index: number): string {
-  return `${basis}:${plane}:${index}`;
+export type MprExtractQuality = 'interactive' | 'full';
+
+export type MprExtractOptions = {
+  /** Lower quality while the user is actively scrolling (keeps UI responsive). */
+  quality?: MprExtractQuality;
+};
+
+function sliceCacheKey(basis: MprBasis, plane: MprPlane, quality: MprExtractQuality): string {
+  return `${basis}:${plane}:${quality}`;
+}
+
+function sliceBytes(slice: MprSlice): number {
+  return slice.pixels.byteLength;
+}
+
+/**
+ * Drop cache entries until under budget. Does not mutate pixel buffers still
+ * referenced by React — removing Map refs is enough for GC.
+ */
+function pruneSliceCache(cache: Map<string, MprSlice>, keepKey: string): void {
+  let total = 0;
+  for (const slice of cache.values()) total += sliceBytes(slice);
+  if (total <= MAX_SLICE_CACHE_BYTES) return;
+
+  // Evict interactive slots first, then anything except the just-written key.
+  const keys = [...cache.keys()].sort((a, b) => {
+    const ai = a.includes(':interactive') ? 0 : 1;
+    const bi = b.includes(':interactive') ? 0 : 1;
+    return ai - bi;
+  });
+  for (const key of keys) {
+    if (total <= MAX_SLICE_CACHE_BYTES) break;
+    if (key === keepKey) continue;
+    const prev = cache.get(key);
+    if (!prev) continue;
+    total -= sliceBytes(prev);
+    cache.delete(key);
+  }
 }
 
 function rememberSlice(
   volume: VolumeData,
   basis: MprBasis,
+  quality: MprExtractQuality,
   slice: MprSlice,
 ): MprSlice {
   let cache = sliceCaches.get(volume);
@@ -239,19 +280,25 @@ function rememberSlice(
     cache = new Map();
     sliceCaches.set(volume, cache);
   }
-  const key = sliceCacheKey(basis, slice.plane, slice.index);
-  cache.set(key, slice);
-  while (cache.size > MAX_CACHED_SLICES) {
-    const oldest = cache.keys().next().value;
-    if (oldest) cache.delete(oldest);
+  const key = sliceCacheKey(basis, slice.plane, quality);
+
+  // When settling on full quality, drop the interactive twin for this plane.
+  if (quality === 'full') {
+    cache.delete(sliceCacheKey(basis, slice.plane, 'interactive'));
   }
+
+  cache.set(key, slice);
+  pruneSliceCache(cache, key);
   return slice;
 }
 
-function copyPlanePixels(
-  src: Float32Array | Int16Array,
-): Float32Array | Int16Array {
-  return src instanceof Int16Array ? new Int16Array(src) : new Float32Array(src);
+/** Clear all cached MPR rasters for a volume (e.g. on study close). */
+export function clearMprSliceCache(volume: VolumeData | null | undefined): void {
+  if (!volume) return;
+  const cache = sliceCaches.get(volume);
+  if (!cache) return;
+  cache.clear();
+  sliceCaches.delete(volume);
 }
 
 function allocPlane(size: number, data: Float32Array | Int16Array): Float32Array | Int16Array {
@@ -299,8 +346,8 @@ function extractStackMprSlice(
   if (plane === 'axial') {
     const z = Math.min(nz - 1, Math.max(0, index));
     const start = z * ny * nx;
-    // Copy — never return a live view into volume.data (shared buffer races with cache/GPU).
-    const pixels = copyPlanePixels(data.subarray(start, start + nx * ny));
+    // Live view into volume.data is safe: we never mutate pixel buffers in-place.
+    const pixels = data.subarray(start, start + nx * ny);
     return {
       pixels,
       width: nx,
@@ -357,6 +404,8 @@ function extractPatientMprSlice(
   volume: VolumeData,
   plane: MprPlane,
   index: number,
+  maxDimCap: number,
+  interpolate: boolean,
 ): MprSlice | null {
   const extents = patientPlaneExtents(volume, plane);
   if (!extents) return null;
@@ -369,12 +418,19 @@ function extractPatientMprSlice(
   const stepV = plane === 'axial' ? sy : sz;
 
   const nCount = Math.max(1, Math.round((nMax - nMin) / (stepN > 0 ? stepN : 1)));
-  const width = Math.max(1, Math.round((uMax - uMin) / (stepU > 0 ? stepU : 1)));
-  const height = Math.max(1, Math.round((vMax - vMin) / (stepV > 0 ? stepV : 1)));
+  let width = Math.max(1, Math.round((uMax - uMin) / (stepU > 0 ? stepU : 1)));
+  let height = Math.max(1, Math.round((vMax - vMin) / (stepV > 0 ? stepV : 1)));
+  const maxDim = Math.max(width, height);
+  if (maxDim > maxDimCap) {
+    const scale = maxDimCap / maxDim;
+    width = Math.max(32, Math.round(width * scale));
+    height = Math.max(32, Math.round(height * scale));
+  }
   const zi = Math.min(nCount - 1, Math.max(0, index));
   const n = nMin + ((zi + 0.5) / nCount) * (nMax - nMin);
 
   const pixels = new Float32Array(width * height);
+  const sample = interpolate ? sampleTrilinear : sampleVolume;
   for (let v = 0; v < height; v++) {
     for (let u = 0; u < width; u++) {
       const uu = uMin + ((u + 0.5) / width) * (uMax - uMin);
@@ -387,9 +443,7 @@ function extractPatientMprSlice(
         ),
       );
       const voxel = patientToVoxel(volume, p);
-      pixels[v * width + u] = voxel
-        ? sampleTrilinear(volume, voxel.x, voxel.y, voxel.z)
-        : 0;
+      pixels[v * width + u] = voxel ? sample(volume, voxel.x, voxel.y, voxel.z) : 0;
     }
   }
 
@@ -421,23 +475,30 @@ export function extractMprSlice(
   plane: MprPlane,
   index: number,
   basis: MprBasis = 'patient',
+  opts?: MprExtractOptions,
 ): MprSlice {
+  const quality: MprExtractQuality = opts?.quality ?? 'full';
+  const maxDimCap =
+    quality === 'interactive' ? MAX_PATIENT_MPR_DIM_INTERACTIVE : MAX_PATIENT_MPR_DIM_FULL;
+  const interpolate = quality === 'full';
   const resolved = resolveMprBasis(volume, basis);
   const cache = sliceCaches.get(volume);
-  const key = sliceCacheKey(resolved, plane, index);
+  const key = sliceCacheKey(resolved, plane, quality);
   const hit = cache?.get(key);
   if (hit && hit.plane === plane && hit.index === index) return hit;
 
   let slice: MprSlice;
   if (resolved === 'patient') {
-    slice = extractPatientMprSlice(volume, plane, index) ?? extractStackMprSlice(volume, plane, index);
+    slice =
+      extractPatientMprSlice(volume, plane, index, maxDimCap, interpolate) ??
+      extractStackMprSlice(volume, plane, index);
   } else {
     slice = extractStackMprSlice(volume, plane, index);
   }
   if (slice.plane !== plane) {
     slice = { ...slice, plane };
   }
-  return rememberSlice(volume, resolved, slice);
+  return rememberSlice(volume, resolved, quality, slice);
 }
 
 export function maxIndex(

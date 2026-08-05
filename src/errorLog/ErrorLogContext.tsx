@@ -6,6 +6,8 @@ import {
   useState,
   type ReactNode,
 } from 'react';
+import { useLocale } from '../i18n/LocaleContext';
+import { humanizeError } from './humanizeError';
 import {
   createErrorLogStore,
   type ErrorLogEntry,
@@ -27,15 +29,16 @@ export function ErrorLogProvider({
   children: ReactNode;
   options?: ErrorLogOptions;
 }) {
+  const { t } = useLocale();
   const store = useMemo(() => createErrorLogStore(options), [options]);
   const [entries, setEntries] = useState<ErrorLogEntry[]>(() => store.getEntries());
 
   const reportError = useCallback(
     (message: string, source?: string) => {
-      store.add(message, source);
+      store.add(humanizeError(message, t), source);
       setEntries(store.getEntries());
     },
-    [store],
+    [store, t],
   );
 
   const clearLog = useCallback(() => {

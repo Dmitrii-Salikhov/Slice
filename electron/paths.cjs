@@ -199,7 +199,7 @@ function assertOpenable(filePath) {
   if (allowedOpenFiles.has(n)) return n;
   if (isSessionTemp(n)) return n;
   for (const root of allowedRoots) {
-    if (isInside(n, root) && /\.(pdf|png|jpe?g|dcm|dicom)$/i.test(n)) return n;
+    if (isInside(n, root) && /\.(pdf|png|jpe?g|dcm|dicom|ima)$/i.test(n)) return n;
   }
   throw pathDenied('Path not allowed to open');
 }

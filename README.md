@@ -74,7 +74,7 @@ npm run dist:win    # NSIS installer → release/
 npm run dist:dir    # unpacked dir (faster smoke)
 ```
 
-Uses `Icon.ico` / `build/icon.ico`, associates `.dcm` / `.dicom` (per-machine NSIS).
+Uses `Icon.ico` / `build/icon.ico`, associates `.dcm` / `.dicom` / `.ima` (per-machine NSIS).
 
 ## Roadmap (next)
 

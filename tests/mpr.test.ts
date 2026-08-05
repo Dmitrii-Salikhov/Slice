@@ -11,6 +11,7 @@ import {
   cursorFromPlaneIndex,
   crosshairInMprPlane,
   cursorFromMprPlaneClick,
+  clearMprSliceCache,
 } from '../src/viewer/mpr';
 import { makeInstance, makeVolume } from './helpers';
 import type { DicomSeries } from '../src/dicom/types';
@@ -314,6 +315,30 @@ describe('mpr', () => {
         expect(planeIndexFromCursor(vol, plane, next, 'patient')).toBe(i);
       }
     }
+  });
+
+  it('caps patient MPR raster size to limit memory', () => {
+    const vol = makeVolume([16, 16, 16]);
+    vol.spacing = [0.05, 0.05, 0.05];
+    const axial = extractMprSlice(vol, 'axial', 8, 'patient');
+    expect(Math.max(axial.width, axial.height)).toBeLessThanOrEqual(640);
+    const coronal = extractMprSlice(vol, 'coronal', 8, 'patient');
+    expect(Math.max(coronal.width, coronal.height)).toBeLessThanOrEqual(640);
+    const fast = extractMprSlice(vol, 'axial', 8, 'patient', { quality: 'interactive' });
+    expect(Math.max(fast.width, fast.height)).toBeLessThanOrEqual(256);
+  });
+
+  it('clears MPR slice cache and drops interactive twin after full extract', () => {
+    const vol = makeVolume([16, 16, 16]);
+    vol.spacing = [0.05, 0.05, 0.05];
+    const interactive = extractMprSlice(vol, 'axial', 4, 'patient', { quality: 'interactive' });
+    expect(interactive.index).toBe(4);
+    const full = extractMprSlice(vol, 'axial', 5, 'patient', { quality: 'full' });
+    expect(full.index).toBe(5);
+    // Cache hit for same full index
+    expect(extractMprSlice(vol, 'axial', 5, 'patient', { quality: 'full' })).toBe(full);
+    clearMprSliceCache(vol);
+    expect(extractMprSlice(vol, 'axial', 5, 'patient', { quality: 'full' })).not.toBe(full);
   });
 
   it('patient crosshair ↔ click round-trips on axial', () => {

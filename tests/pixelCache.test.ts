@@ -79,4 +79,25 @@ describe('PixelCache', () => {
     expect(inst.pixelsInt16).toBeUndefined();
     expect(inst.pixelStatus).toBe('meta');
   });
+
+  it('self-cleans when byte budget is exceeded', async () => {
+    const cache = new PixelCache({ maxEntries: 50, maxBytes: 40 });
+    const mk = (path: string) =>
+      makeInstance({
+        filePath: path,
+        pixelsInt16: new Int16Array(16), // 32 bytes
+        pixels: undefined,
+        pixelStatus: 'ready',
+        rows: 4,
+        columns: 4,
+      });
+    const a = mk('/a.dcm');
+    const b = mk('/b.dcm');
+    await cache.ensure(a, async () => new ArrayBuffer(0));
+    await cache.ensure(b, async () => new ArrayBuffer(0));
+    expect(cache.size).toBe(1);
+    expect(cache.bytes).toBeLessThanOrEqual(40);
+    expect(a.pixelsInt16).toBeUndefined();
+    expect(b.pixelsInt16).toBeTruthy();
+  });
 });

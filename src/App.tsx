@@ -54,6 +54,7 @@ import {
 } from './viewer/mpr';
 import { useLocale } from './i18n/LocaleContext';
 import { useErrorLog } from './errorLog/ErrorLogContext';
+import { messageForFailedLoad } from './errorLog/humanizeError';
 import { useUpdateLog } from './update/UpdateLogContext';
 import { checkGithubUpdate, type UpdateCheckResult } from './update/checkUpdates';
 import { GITHUB_REPO } from './config/github';
@@ -243,15 +244,21 @@ export default function App() {
       setViewMode((m) => (m === 'compare' || m === 'mpr' ? 'single' : m));
 
       try {
+        const skippedReasons: string[] = [];
         const loaded = await loadDicomFolder(
           files,
           (p) => window.slice!.readFile(p),
           setProgress,
-          { signal: controller.signal },
+          {
+            signal: controller.signal,
+            onSkipped: (_path, reason) => {
+              skippedReasons.push(reason);
+            },
+          },
         );
         if (controller.signal.aborted) return;
         if (loaded.length === 0) {
-          reportError(t('error.noParse'), 'load');
+          reportError(messageForFailedLoad(files.length, skippedReasons, t), 'load');
           return;
         }
         setStudies(loaded);
@@ -259,7 +266,7 @@ export default function App() {
         if (firstSeries) selectSeries(firstSeries);
       } catch (e) {
         if (e instanceof Error && e.name === 'AbortError') {
-          reportError(t('error.loadCancelled'), 'load');
+          // Cancelled by user — not an error for the log
           return;
         }
         reportError(e instanceof Error ? e.message : String(e), 'load');
@@ -318,8 +325,8 @@ export default function App() {
 
   const handleWebGlFailed = useCallback(() => {
     setUseWebGl(false);
-    reportError('WebGL unavailable — using Canvas renderer', 'render');
-  }, [reportError]);
+    reportError(t('error.webglFallback'), 'render');
+  }, [reportError, t]);
 
   const tryOpenDicomdir = useCallback(
     async (rootPath: string): Promise<boolean> => {
@@ -942,7 +949,7 @@ export default function App() {
         title: t('toolbar.exportDicom'),
         defaultPath: name,
         filters: [
-          { name: 'DICOM', extensions: ['dcm', 'dicom'] },
+          { name: 'DICOM', extensions: ['dcm', 'dicom', 'ima'] },
           { name: 'All files', extensions: ['*'] },
         ],
       });

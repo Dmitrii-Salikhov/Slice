@@ -15,7 +15,12 @@ const MAX_ZIP_BYTES = 512 * 1024 * 1024;
 function looksLikeDicomName(name) {
   const base = path.basename(name).toLowerCase();
   if (base === 'dicomdir') return false;
-  return base.endsWith('.dcm') || base.endsWith('.dicom') || !base.includes('.');
+  return (
+    base.endsWith('.dcm') ||
+    base.endsWith('.dicom') ||
+    base.endsWith('.ima') ||
+    !base.includes('.')
+  );
 }
 
 function isZipPath(filePath) {
@@ -140,5 +145,6 @@ module.exports = {
   extractZipArchive,
   zipNeedsPassword,
   isZipPath,
+  looksLikeDicomName,
   MAX_ZIP_BYTES,
 };

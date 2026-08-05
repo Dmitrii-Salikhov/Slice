@@ -23,6 +23,7 @@ import {
   planeIndexFromCursor,
   cursorFromPlaneIndex,
   resolveMprBasis,
+  clearMprSliceCache,
 } from '../viewer/mpr';
 import { hasPatientGeometry } from '../viewer/volumeGeometry';
 import { useLocale } from '../i18n/LocaleContext';
@@ -135,6 +136,17 @@ export function MprLayout({
 }: Props) {
   const { t } = useLocale();
   const [syncScroll, setSyncScroll] = useState(false);
+  /**
+   * Opt-in: while scrolling use interactive MPR; after idle → full.
+   * Off: always full quality (other scroll protections still apply).
+   */
+  const [fastScroll, setFastScroll] = useState(false);
+  /** True while the wheel is moving (clears after short idle). */
+  const [scrollActive, setScrollActive] = useState(false);
+  const scrollIdleTimerRef = useRef<number | null>(null);
+  const scrollRafRef = useRef<number | null>(null);
+  const pendingScrollRef = useRef<{ plane: MprPlane; index: number } | null>(null);
+  const lastObliqueRef = useRef<ReturnType<typeof extractObliqueSlice> | null>(null);
   const basis = resolveMprBasis(volume, mprBasis);
   const canPatient = hasPatientGeometry(volume);
 
@@ -154,17 +166,43 @@ export function MprLayout({
     cursorRef.current = cursor;
   }, [cursor]);
 
+  useEffect(
+    () => () => {
+      if (scrollIdleTimerRef.current != null) window.clearTimeout(scrollIdleTimerRef.current);
+      if (scrollRafRef.current != null) cancelAnimationFrame(scrollRafRef.current);
+      clearMprSliceCache(volume);
+      lastObliqueRef.current = null;
+    },
+    [volume],
+  );
+
+  const markScrolling = () => {
+    if (scrollIdleTimerRef.current != null) window.clearTimeout(scrollIdleTimerRef.current);
+    setScrollActive(true);
+    scrollIdleTimerRef.current = window.setTimeout(() => {
+      scrollIdleTimerRef.current = null;
+      setScrollActive(false);
+    }, 180);
+  };
+
+  // Button on: low-res while scrolling; full after idle. Button off: always full.
+  const extractQuality = fastScroll && scrollActive ? 'interactive' : 'full';
+
   const axialSlice = useMemo(
-    () => extractMprSlice(volume, 'axial', planeIndices.axial, basis),
-    [volume, planeIndices.axial, basis],
+    () => extractMprSlice(volume, 'axial', planeIndices.axial, basis, { quality: extractQuality }),
+    [volume, planeIndices.axial, basis, extractQuality],
   );
   const coronalSlice = useMemo(
-    () => extractMprSlice(volume, 'coronal', planeIndices.coronal, basis),
-    [volume, planeIndices.coronal, basis],
+    () =>
+      extractMprSlice(volume, 'coronal', planeIndices.coronal, basis, { quality: extractQuality }),
+    [volume, planeIndices.coronal, basis, extractQuality],
   );
   const sagittalSlice = useMemo(
-    () => extractMprSlice(volume, 'sagittal', planeIndices.sagittal, basis),
-    [volume, planeIndices.sagittal, basis],
+    () =>
+      extractMprSlice(volume, 'sagittal', planeIndices.sagittal, basis, {
+        quality: extractQuality,
+      }),
+    [volume, planeIndices.sagittal, basis, extractQuality],
   );
 
   const slices = useMemo(
@@ -185,10 +223,17 @@ export function MprLayout({
     return downscaleObliquePlane(rotateOblique(base, deferredYaw, deferredPitch));
   }, [volume, deferredCursor, deferredYaw, deferredPitch]);
 
-  const obliqueSlice = useMemo(
-    () => (layoutMode === 'quad' ? extractObliqueSlice(volume, oblique) : null),
-    [layoutMode, volume, oblique],
-  );
+  const obliqueSlice = useMemo(() => {
+    if (layoutMode !== 'quad') {
+      lastObliqueRef.current = null;
+      return null;
+    }
+    // Active wheel: skip expensive oblique rebuild (keeps UI responsive).
+    if (scrollActive && lastObliqueRef.current) return lastObliqueRef.current;
+    const next = extractObliqueSlice(volume, oblique);
+    lastObliqueRef.current = next;
+    return next;
+  }, [layoutMode, volume, oblique, scrollActive]);
 
   const hu = probeVolume(volume, cursor);
 
@@ -217,7 +262,7 @@ export function MprLayout({
     publishCursor(next);
   };
 
-  const setPlaneIndex = (plane: MprPlane, index: number) => {
+  const applyPlaneIndex = (plane: MprPlane, index: number) => {
     const zi = clampPlaneIndex(volume, plane, index, basis);
 
     if (!syncScroll || layoutMode !== 'quad') {
@@ -256,6 +301,19 @@ export function MprLayout({
         volume,
       ),
     );
+  };
+
+  /** Coalesce wheel events to one extract per animation frame. */
+  const setPlaneIndex = (plane: MprPlane, index: number) => {
+    markScrolling();
+    pendingScrollRef.current = { plane, index };
+    if (scrollRafRef.current != null) return;
+    scrollRafRef.current = requestAnimationFrame(() => {
+      scrollRafRef.current = null;
+      const pending = pendingScrollRef.current;
+      pendingScrollRef.current = null;
+      if (pending) applyPlaneIndex(pending.plane, pending.index);
+    });
   };
 
   const renderViewport = (plane: MprPlane, titleKey: MessageKey) => (
@@ -341,6 +399,16 @@ export function MprLayout({
             {t('mpr.syncScroll')}
           </button>
         )}
+
+        <button
+          type="button"
+          className={`btn btn--ghost btn--sm${fastScroll ? ' btn--active' : ''}`}
+          onClick={() => setFastScroll((v) => !v)}
+          title={t('mpr.fastScrollTip')}
+          aria-pressed={fastScroll}
+        >
+          {t('mpr.fastScroll')}
+        </button>
 
         {layoutMode === 'single' && (
           <div className="mpr__plane-toggle" role="group" aria-label={t('mpr.plane')}>

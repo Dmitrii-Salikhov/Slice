@@ -128,7 +128,9 @@ export function renderSliceToCanvas(
   ctx.save();
   ctx.translate(dx + (flipH ? drawW : 0), dy + (flipV ? drawH : 0));
   ctx.scale(flipH ? -1 : 1, flipV ? -1 : 1);
-  ctx.imageSmoothingEnabled = mmScale < 1;
+  // Smooth when magnifying (and when shrinking) — NEAREST looks blocky in MPR zoom.
+  ctx.imageSmoothingEnabled = true;
+  ctx.imageSmoothingQuality = 'high';
   ctx.drawImage(off, 0, 0, drawW, drawH);
   ctx.restore();
 }

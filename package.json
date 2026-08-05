@@ -1,6 +1,6 @@
 {
   "name": "slice",
-  "version": "1.0.7",
+  "version": "1.0.8",
   "private": true,
   "description": "Local desktop DICOM viewer with W/L and MPR",
   "author": "Slice",
@@ -72,7 +72,9 @@
       "target": [
         {
           "target": "dir",
-          "arch": ["x64"]
+          "arch": [
+            "x64"
+          ]
         }
       ]
     },
@@ -89,6 +91,14 @@
         "ext": "dicom",
         "name": "DICOM Image",
         "description": "DICOM medical image",
+        "mimeType": "application/dicom",
+        "role": "Viewer",
+        "icon": "dcm.ico"
+      },
+      {
+        "ext": "ima",
+        "name": "Siemens DICOM Image",
+        "description": "Siemens DICOM medical image (.IMA)",
         "mimeType": "application/dicom",
         "role": "Viewer",
         "icon": "dcm.ico"
